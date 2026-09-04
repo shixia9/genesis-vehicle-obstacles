@@ -23,6 +23,7 @@ import csv
 import json
 import math
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -30,9 +31,11 @@ import numpy as np
 from PIL import Image
 
 # Some Windows installations leave Quadrants' default C:\quadrants_cache read-only.
-# Keep this experiment self-contained and reproducible by placing its kernel cache
-# under the ignored project output directory.
-os.environ.setdefault("QD_OFFLINE_CACHE_FILE_PATH", str(Path("out/quadrants_cache").resolve()))
+# Keep the cache in the active Conda environment, which is writable for the user
+# who installed it.  GENESIS_QUADRANTS_CACHE can override this location explicitly.
+default_quadrants_cache = Path(sys.executable).resolve().parent / "quadrants_cache"
+cache_override = os.environ.get("GENESIS_QUADRANTS_CACHE")
+os.environ.setdefault("QD_OFFLINE_CACHE_FILE_PATH", cache_override or str(default_quadrants_cache))
 
 import genesis as gs
 from genesis.utils.geom import euler_to_quat

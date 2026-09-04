@@ -55,7 +55,7 @@ out/mobile_robot/
 └── depth/     # 使用 --save-images 时生成
 ```
 
-运行时会把 Quadrants 内核缓存放到被 Git 忽略的 `out/quadrants_cache/`，避免 Windows 上默认 `C:\quadrants_cache` 无写权限导致启动失败。
+运行时会把 Quadrants 内核缓存放到当前 Conda 环境目录下的 `quadrants_cache/`，避免 Windows 上默认 `C:\quadrants_cache` 无写权限导致启动失败。也可以通过 `GENESIS_QUADRANTS_CACHE` 环境变量指定其他路径。
 
 在固定种子和默认房间配置下，CPU 基线通常约 783 步到达目标，且不发生几何碰撞；GPU 后端可用 `--gpu` 做同样的短回归。
 
