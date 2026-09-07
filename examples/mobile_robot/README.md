@@ -25,6 +25,14 @@ conda activate genesis
 python examples/mobile_robot/room_navigation.py --steps 300
 ```
 
+如果 macOS 上激活项目 `.venv` 后出现 `ModuleNotFoundError: No module named 'numpy'`，说明虚拟环境只有 Python/部分基础包，尚未装入项目依赖。可使用本机 uv 缓存离线补全，不会重新下载：
+
+```bash
+uv pip install --offline --python .venv/bin/python -e . 'mujoco==3.10.0'
+```
+
+补全后重新执行 `source .venv/bin/activate`，再运行上面的案例命令即可。
+
 使用 CUDA：
 
 ```powershell
@@ -62,3 +70,47 @@ out/mobile_robot/
 当前规则控制器是验证仿真闭环的基线，不是最终导航算法。后续应在保持 `reset`、观测、动作和日志接口稳定的前提下，增加批量环境和强化学习策略。
 
 策略细节请参阅 [STRATEGY.md](STRATEGY.md)。
+
+需求分析与实施计划请参阅 [_docs/SIMULATION_ANALYSIS_AND_PLAN.md](_docs/SIMULATION_ANALYSIS_AND_PLAN.md)。
+
+## 可观测闭环实验副本
+
+按照计划文档，当前新增了不修改原始基线的实验副本：
+
+```bash
+python examples/mobile_robot/room_navigation_observable.py \
+  --vis --robot-view --save-sensors --scenario room_obstacle --steps 1200
+```
+
+该副本保留原有规则控制和运动学模型，并增加车载 RGB 第一视角、场景障碍物选项，以及同步的 RGB/深度帧、LiDAR、IMU、里程计、动作和位姿记录。使用 `--robot-view` 时，单独的 RGB 窗口显示车载第一视角；俯视图仍会保存到 `rgb/`，但不会覆盖第一视角窗口。原始 [room_navigation.py](room_navigation.py) 继续作为稳定回归基线。
+
+在 `room_obstacle` 场景中，副本控制器会在 LiDAR 检测到路径障碍物后执行“转向—横向通过—回到航点”的有限绕行动作；这只是可解释的局部避障实验，不等同于完整全局规划器。
+
+程序化算法接口位于 [environment.py](environment.py)：
+
+```python
+from examples.mobile_robot.environment import EnvironmentConfig, MobileRobotEnv
+
+env = MobileRobotEnv(EnvironmentConfig(render=True))
+observation = env.reset()
+observation, reward, terminated, truncated, info = env.step(
+    {"linear_velocity": 0.3, "angular_velocity": 0.0}
+)
+env.close()
+```
+
+其中 `observation` 包含机器人 RGB、深度、LiDAR、IMU、里程计和位姿；算法通过 `step(action)` 提供线速度和角速度。`render=False` 时仍会返回深度、LiDAR、IMU 和位姿，只是不渲染 RGB 数组。
+
+如果要用副本中已有的规则控制器驱动环境，可使用同一个标准观测接口：
+
+```python
+observation = env.reset()
+for _ in range(1200):
+    action = env.rule_action(observation)
+    observation, reward, terminated, truncated, info = env.step(action, render=False)
+    if terminated or truncated:
+        break
+env.close()
+```
+
+`sensor_observations.jsonl` 中每条记录的 `observation` 是动作执行后的下一时刻观测，`action_step` 标明产生该观测的动作所在步；这样图像、传感器、位姿和动作不会被误认为来自同一物理时刻。CLI 运行时可用 `--save-sensors` 保存这些记录。
