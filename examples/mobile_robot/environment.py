@@ -25,11 +25,11 @@ try:
         INITIAL_POSITION,
         Odometry,
         RoomConfig,
-        TARGET_POSITION,
-        WAYPOINTS,
         build_scene,
         geometry_collision,
         read_sensor_observation,
+        target_for_scenario,
+        waypoints_for_scenario,
     )
 except ImportError:
     from room_navigation_observable import (  # type: ignore[no-redef]
@@ -38,11 +38,11 @@ except ImportError:
         INITIAL_POSITION,
         Odometry,
         RoomConfig,
-        TARGET_POSITION,
-        WAYPOINTS,
         build_scene,
         geometry_collision,
         read_sensor_observation,
+        target_for_scenario,
+        waypoints_for_scenario,
     )
 
 
@@ -101,8 +101,8 @@ class MobileRobotEnv:
         self.car_config = CarConfig()
         self.controller = DifferentialDriveController(
             self.car_config,
-            waypoints=WAYPOINTS,
-            enable_detour=self.config.scenario == "room_obstacle",
+            waypoints=waypoints_for_scenario(self.config.scenario),
+            enable_detour=self.config.scenario == "room_center_obstacle",
             dt=self.config.dt,
         )
         self.room_config = RoomConfig()
@@ -262,7 +262,7 @@ class MobileRobotEnv:
     def _distance_to_target(self, position: np.ndarray | None = None) -> float:
         if position is None:
             position = self.observe(render=False)["robot_pose"][:3]
-        target = np.asarray(TARGET_POSITION, dtype=np.float32)
+        target = np.asarray(target_for_scenario(self.config.scenario), dtype=np.float32)
         return float(np.linalg.norm(target - position[:2]))
 
     def _ensure_open(self) -> None:

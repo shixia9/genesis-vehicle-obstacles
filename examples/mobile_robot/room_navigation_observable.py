@@ -66,11 +66,20 @@ class CarConfig:
 
 
 INITIAL_POSITION = (-2.8, -1.8, 0.22)
-WAYPOINTS = (
+DEFAULT_WAYPOINTS = (
     (-2.8, -2.1),
     (-2.8, 1.7),
     (2.8, 1.7),
 )
+SHOWCASE_WAYPOINTS = (
+    INITIAL_POSITION[:2],
+    (-2.8, 1.4),
+    (-0.2, 1.4),
+    (-0.2, -0.8),
+    (2.8, -0.8),
+    (2.8, 1.7),
+)
+WAYPOINTS = DEFAULT_WAYPOINTS
 TARGET_POSITION = WAYPOINTS[-1]
 
 
@@ -98,10 +107,33 @@ OBSTACLE_SPECS: tuple[tuple[tuple[float, float], tuple[float, float, float]], ..
 SCENARIO_OBSTACLE_SPECS: dict[str, tuple[tuple[tuple[float, float], tuple[float, float, float]], ...]] = {
     "default": OBSTACLE_SPECS,
     "room_basic": (),
-    # Keep this acceptance scenario focused on one box placed on the nominal vertical
-    # route. The richer fixed-obstacle layout remains available as ``default``.
-    "room_obstacle": (((-2.8, 0.2), (0.8, 0.8, 0.7)),),
+    # A presentation-oriented room: two boxes sit beside a deliberately winding
+    # route instead of forming a wall directly across the robot's start direction.
+    "room_obstacle": (
+        ((-1.1, -0.3), (0.8, 0.8, 0.7)),
+        ((1.1, 0.6), (0.8, 0.8, 0.9)),
+    ),
+    # Keep the single central box as a focused local-obstacle regression case.
+    "room_center_obstacle": (((-2.8, 0.2), (0.8, 0.8, 0.7)),),
 }
+
+SCENARIO_WAYPOINTS = {
+    "default": DEFAULT_WAYPOINTS,
+    "room_basic": DEFAULT_WAYPOINTS,
+    "room_obstacle": SHOWCASE_WAYPOINTS,
+    "room_center_obstacle": DEFAULT_WAYPOINTS,
+}
+
+
+def waypoints_for_scenario(scenario: str) -> tuple[tuple[float, float], ...]:
+    try:
+        return SCENARIO_WAYPOINTS[scenario]
+    except KeyError as exc:
+        raise ValueError(f"Unknown scenario: {scenario}") from exc
+
+
+def target_for_scenario(scenario: str) -> tuple[float, float]:
+    return waypoints_for_scenario(scenario)[-1]
 
 
 def obstacle_specs_for_scenario(scenario: str):
@@ -507,7 +539,7 @@ def build_scene(args: argparse.Namespace):
     obstacle_specs = obstacle_specs_for_scenario(args.scenario)
     add_room(scene, RoomConfig(), obstacle_specs)
 
-    target = (2.8, 1.7)
+    target = target_for_scenario(args.scenario)
     scene.add_entity(
         gs.morphs.Cylinder(height=0.025, radius=0.22, pos=(*target, 0.013), fixed=True),
         surface=gs.surfaces.Emission(color=(0.1, 1.0, 0.2)),
@@ -677,8 +709,8 @@ def run(args: argparse.Namespace) -> dict[str, object]:
     car_config = CarConfig()
     controller = DifferentialDriveController(
         car_config,
-        waypoints=WAYPOINTS,
-        enable_detour=args.scenario == "room_obstacle",
+        waypoints=waypoints_for_scenario(args.scenario),
+        enable_detour=args.scenario == "room_center_obstacle",
         dt=args.dt,
     )
     odometry = Odometry(position=np.array(INITIAL_POSITION[:2], dtype=np.float32), yaw=0.0)
@@ -832,8 +864,8 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         "termination_reason": "reached" if reached else "collision" if collided else "timeout",
         "final_x": float(final_position[0]),
         "final_y": float(final_position[1]),
-        "target_x": TARGET_POSITION[0],
-        "target_y": TARGET_POSITION[1],
+        "target_x": target_for_scenario(args.scenario)[0],
+        "target_y": target_for_scenario(args.scenario)[1],
         "front_min_lidar": float(np.min(last_lidar[front_lidar])),
         "backend": "gpu" if args.gpu else "cpu",
         "telemetry_file": str(telemetry_path),

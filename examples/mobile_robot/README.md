@@ -84,7 +84,15 @@ python examples/mobile_robot/room_navigation_observable.py \
 
 该副本保留原有规则控制和运动学模型，并增加车载 RGB 第一视角、场景障碍物选项，以及同步的 RGB/深度帧、LiDAR、IMU、里程计、动作和位姿记录。使用 `--robot-view` 时，单独的 RGB 窗口显示车载第一视角；俯视图仍会保存到 `rgb/`，但不会覆盖第一视角窗口。原始 [room_navigation.py](room_navigation.py) 继续作为稳定回归基线。
 
-在 `room_obstacle` 场景中，副本控制器会在 LiDAR 检测到路径障碍物后执行“转向—横向通过—回到航点”的有限绕行动作；这只是可解释的局部避障实验，不等同于完整全局规划器。
+`room_obstacle` 是展示场景：两个障碍物分布在蛇形航线两侧，小车会依次经过多个航点。若要专门演示中央障碍物触发的局部避障，可运行 `--scenario room_center_obstacle`；此时控制器执行“转向—横向离开—沿路线前进—恢复航点”的有限绕行动作。这两者都只是可解释的 MVP 实验，不等同于完整全局规划器。
+
+展示场景的路线为：
+
+```text
+起点 → 左侧上行 → 中上方横行 → 中部下行 → 右侧横行 → 目标点
+```
+
+两个障碍物分别位于中左下方和中右上方，能够在俯视图中看出场景层次，也不会直接堵住小车的起步方向。
 
 程序化算法接口位于 [environment.py](environment.py)：
 
