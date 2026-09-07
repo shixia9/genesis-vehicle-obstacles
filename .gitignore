@@ -160,3 +160,6 @@ outputs/
 
 # Local benchmark archive (not versioned)
 /benchmarks/
+
+# Local prompt
+/examples/mobile_robot/_docs/
