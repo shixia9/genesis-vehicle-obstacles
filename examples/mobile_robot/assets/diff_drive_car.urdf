@@ -1,95 +1,132 @@
 <?xml version="1.0"?>
-<robot name="genesis_diff_drive_car">
+<!--
+  Four-wheel skid-steer/differential-drive research platform.
+  The +X direction is the front of the vehicle and the wheel axes point along +Y.
+  All four wheels are continuous joints so the left pair and right pair can be
+  driven with the same angular target.
+-->
+<robot name="genesis_four_wheel_diff_drive_car">
   <material name="chassis_blue">
     <color rgba="0.08 0.25 0.8 1"/>
+  </material>
+  <material name="chassis_top">
+    <color rgba="0.03 0.10 0.35 1"/>
   </material>
   <material name="wheel_black">
     <color rgba="0.03 0.03 0.03 1"/>
   </material>
-  <material name="caster_gray">
-    <color rgba="0.35 0.35 0.35 1"/>
-  </material>
 
   <link name="base_link">
     <inertial>
-      <origin xyz="0 0 0.18" rpy="0 0 0"/>
-      <mass value="4.0"/>
-      <inertia ixx="0.12" ixy="0" ixz="0" iyy="0.28" iyz="0" izz="0.35"/>
+      <origin xyz="0 0 0.22" rpy="0 0 0"/>
+      <mass value="6.0"/>
+      <inertia ixx="0.174" ixy="0" ixz="0" iyy="0.341" iyz="0" izz="0.499"/>
     </inertial>
     <visual>
-      <origin xyz="0 0 0.18" rpy="0 0 0"/>
-      <geometry><box size="0.72 0.50 0.20"/></geometry>
+      <origin xyz="0 0 0.22" rpy="0 0 0"/>
+      <geometry><box size="0.78 0.56 0.22"/></geometry>
       <material name="chassis_blue"/>
     </visual>
+    <visual>
+      <origin xyz="0.02 0 0.37" rpy="0 0 0"/>
+      <geometry><box size="0.36 0.42 0.10"/></geometry>
+      <material name="chassis_top"/>
+    </visual>
     <collision>
-      <origin xyz="0 0 0.18" rpy="0 0 0"/>
-      <geometry><box size="0.72 0.50 0.20"/></geometry>
+      <origin xyz="0 0 0.22" rpy="0 0 0"/>
+      <geometry><box size="0.78 0.56 0.22"/></geometry>
     </collision>
   </link>
 
-  <link name="left_wheel">
+  <link name="front_left_wheel">
     <inertial>
-      <mass value="0.25"/>
-      <inertia ixx="0.002" ixy="0" ixz="0" iyy="0.002" iyz="0" izz="0.002"/>
+      <mass value="0.35"/>
+      <inertia ixx="0.003" ixy="0" ixz="0" iyy="0.003" iyz="0" izz="0.003"/>
     </inertial>
     <visual>
       <origin xyz="0 0 0" rpy="1.57079632679 0 0"/>
-      <geometry><cylinder radius="0.12" length="0.08"/></geometry>
+      <geometry><cylinder radius="0.13" length="0.08"/></geometry>
       <material name="wheel_black"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="1.57079632679 0 0"/>
-      <geometry><cylinder radius="0.12" length="0.08"/></geometry>
+      <geometry><cylinder radius="0.13" length="0.08"/></geometry>
     </collision>
   </link>
 
-  <link name="right_wheel">
+  <link name="rear_left_wheel">
     <inertial>
-      <mass value="0.25"/>
-      <inertia ixx="0.002" ixy="0" ixz="0" iyy="0.002" iyz="0" izz="0.002"/>
+      <mass value="0.35"/>
+      <inertia ixx="0.003" ixy="0" ixz="0" iyy="0.003" iyz="0" izz="0.003"/>
     </inertial>
     <visual>
       <origin xyz="0 0 0" rpy="1.57079632679 0 0"/>
-      <geometry><cylinder radius="0.12" length="0.08"/></geometry>
+      <geometry><cylinder radius="0.13" length="0.08"/></geometry>
       <material name="wheel_black"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="1.57079632679 0 0"/>
-      <geometry><cylinder radius="0.12" length="0.08"/></geometry>
+      <geometry><cylinder radius="0.13" length="0.08"/></geometry>
     </collision>
   </link>
 
-  <link name="rear_caster">
+  <link name="front_right_wheel">
     <inertial>
-      <mass value="0.15"/>
-      <inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.001"/>
+      <mass value="0.35"/>
+      <inertia ixx="0.003" ixy="0" ixz="0" iyy="0.003" iyz="0" izz="0.003"/>
     </inertial>
     <visual>
-      <geometry><sphere radius="0.07"/></geometry>
-      <material name="caster_gray"/>
+      <origin xyz="0 0 0" rpy="1.57079632679 0 0"/>
+      <geometry><cylinder radius="0.13" length="0.08"/></geometry>
+      <material name="wheel_black"/>
     </visual>
     <collision>
-      <geometry><sphere radius="0.07"/></geometry>
+      <origin xyz="0 0 0" rpy="1.57079632679 0 0"/>
+      <geometry><cylinder radius="0.13" length="0.08"/></geometry>
     </collision>
   </link>
 
-  <joint name="left_wheel_joint" type="continuous">
+  <link name="rear_right_wheel">
+    <inertial>
+      <mass value="0.35"/>
+      <inertia ixx="0.003" ixy="0" ixz="0" iyy="0.003" iyz="0" izz="0.003"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="1.57079632679 0 0"/>
+      <geometry><cylinder radius="0.13" length="0.08"/></geometry>
+      <material name="wheel_black"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="1.57079632679 0 0"/>
+      <geometry><cylinder radius="0.13" length="0.08"/></geometry>
+    </collision>
+  </link>
+
+  <joint name="front_left_wheel_joint" type="continuous">
     <parent link="base_link"/>
-    <child link="left_wheel"/>
-    <origin xyz="0 0.29 0.12" rpy="0 0 0"/>
+    <child link="front_left_wheel"/>
+    <origin xyz="0.24 0.32 0.13" rpy="0 0 0"/>
     <axis xyz="0 1 0"/>
   </joint>
 
-  <joint name="right_wheel_joint" type="continuous">
+  <joint name="rear_left_wheel_joint" type="continuous">
     <parent link="base_link"/>
-    <child link="right_wheel"/>
-    <origin xyz="0 -0.29 0.12" rpy="0 0 0"/>
+    <child link="rear_left_wheel"/>
+    <origin xyz="-0.24 0.32 0.13" rpy="0 0 0"/>
     <axis xyz="0 1 0"/>
   </joint>
 
-  <joint name="rear_caster_joint" type="fixed">
+  <joint name="front_right_wheel_joint" type="continuous">
     <parent link="base_link"/>
-    <child link="rear_caster"/>
-    <origin xyz="-0.27 0 0.07" rpy="0 0 0"/>
+    <child link="front_right_wheel"/>
+    <origin xyz="0.24 -0.32 0.13" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+
+  <joint name="rear_right_wheel_joint" type="continuous">
+    <parent link="base_link"/>
+    <child link="rear_right_wheel"/>
+    <origin xyz="-0.24 -0.32 0.13" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
   </joint>
 </robot>

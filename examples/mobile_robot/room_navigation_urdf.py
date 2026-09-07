@@ -9,8 +9,8 @@ vehicle in ``assets/diff_drive_car.urdf`` as a dynamic Genesis entity:
 
 The action interface remains linear/angular velocity so that the controller is
 easy to compare with the kinematic MVP.  Before each physics step, the action
-is converted to left/right wheel angular velocities.  The odometry in this
-experiment is wheel-encoder odometry derived from the two URDF joint positions.
+is converted to left/right wheel-pair angular velocities.  The odometry in
+this experiment is wheel-encoder odometry averaged from four URDF joint positions.
 
 Headless smoke test::
 
@@ -22,8 +22,8 @@ Sensor and first-person camera test::
         --vis --robot-view --save-sensors --scenario room_obstacle --steps 1200
 
 This is the smallest dynamic-URDF integration experiment.  It is not intended
-to replace the stable kinematic baseline yet; the URDF's contact, friction and
-caster parameters still need calibration for high-fidelity vehicle behavior.
+to replace the stable kinematic baseline yet; the URDF's contact and friction
+parameters still need calibration for high-fidelity vehicle behavior.
 """
 
 from __future__ import annotations
@@ -59,7 +59,6 @@ try:
         RoomConfig,
         SCENARIO_OBSTACLE_SPECS,
         add_room,
-        geometry_collision,
         obstacle_specs_for_scenario,
         read_sensor_observation,
         target_for_scenario,
@@ -73,7 +72,6 @@ except ImportError:  # Running this file directly from examples/mobile_robot.
         RoomConfig,
         SCENARIO_OBSTACLE_SPECS,
         add_room,
-        geometry_collision,
         obstacle_specs_for_scenario,
         read_sensor_observation,
         target_for_scenario,
@@ -84,15 +82,25 @@ except ImportError:  # Running this file directly from examples/mobile_robot.
 URDF_PATH = Path(__file__).resolve().parent / "assets" / "diff_drive_car.urdf"
 INITIAL_URDF_POSITION = (INITIAL_POSITION[0], INITIAL_POSITION[1], 0.0)
 
-# The dynamic body has small contact and odometry errors that the kinematic
-# showcase route does not need to tolerate.  Keep the obstacles in the same
-# room, but give the URDF vehicle a little more clearance around them.
+# The dynamic body has contact and odometry errors that the kinematic showcase
+# route does not need to tolerate.  Keep the obstacles in the same room, but
+# route the four-wheel vehicle through corridors with clearances on both sides.
 URDF_SHOWCASE_WAYPOINTS = (
     INITIAL_POSITION[:2],
-    (-2.8, 1.4),
-    (0.1, 1.4),
-    (0.1, -0.8),
-    (2.8, -0.8),
+    (-2.8, 1.8),
+    (0.0, 1.8),
+    (0.0, -1.2),
+    (2.8, -1.2),
+    (2.8, 1.7),
+)
+
+URDF_CENTER_OBSTACLE_WAYPOINTS = (
+    INITIAL_POSITION[:2],
+    (-2.8, -0.9),
+    (-1.3, -0.9),
+    (-1.3, 1.3),
+    (-2.8, 1.3),
+    (-2.8, 1.7),
     (2.8, 1.7),
 )
 
@@ -120,6 +128,12 @@ def parse_args() -> argparse.Namespace:
         default="room_basic",
         help="Room obstacle preset (default: room_basic).",
     )
+    parser.add_argument(
+        "--control-pose",
+        choices=("ground_truth", "wheel_odom"),
+        default="ground_truth",
+        help="Pose source for waypoint control (default: ground_truth while wheel slip is calibrated).",
+    )
     parser.add_argument("--image-every", type=int, default=25, help="Capture one image every N steps.")
     parser.add_argument("--log-every", type=int, default=10, help="Print one telemetry row every N steps.")
     parser.add_argument("--seed", type=int, default=7, help="Random seed used by Genesis and NumPy.")
@@ -134,7 +148,12 @@ def parse_args() -> argparse.Namespace:
 
 @dataclass
 class DynamicDifferentialDriveCar:
-    """Adapter from body-level actions to the two URDF wheel joints."""
+    """Adapter from body-level actions to four URDF wheel joints.
+
+    The two left wheels receive one target and the two right wheels receive
+    another.  This is a four-wheel skid-steer drive rather than a front-wheel
+    steering model.
+    """
 
     entity: Any
     base_link: Any
@@ -143,19 +162,25 @@ class DynamicDifferentialDriveCar:
     initial_position: np.ndarray
 
     def __post_init__(self) -> None:
-        left_joint = self.entity.get_joint("left_wheel_joint")
-        right_joint = self.entity.get_joint("right_wheel_joint")
-        self.left_dof = int(left_joint.dofs_idx_local[0])
-        self.right_dof = int(right_joint.dofs_idx_local[0])
-        self.wheel_dofs = [self.left_dof, self.right_dof]
+        wheel_joint_names = (
+            "front_left_wheel_joint",
+            "rear_left_wheel_joint",
+            "front_right_wheel_joint",
+            "rear_right_wheel_joint",
+        )
+        self.wheel_dofs = [
+            int(self.entity.get_joint(name).dofs_idx_local[0]) for name in wheel_joint_names
+        ]
+        self.left_wheel_indices = (0, 1)
+        self.right_wheel_indices = (2, 3)
         self.initial_quat = np.asarray(euler_to_quat((0.0, 0.0, 0.0)), dtype=np.float32)
 
     def configure_velocity_control(self) -> None:
-        """Configure conservative wheel-joint velocity control for the MVP."""
+        """Configure conservative four-wheel velocity control for the MVP."""
         self.entity.set_dofs_kv(8.0, dofs_idx_local=self.wheel_dofs)
         self.entity.set_dofs_force_range(
-            [-20.0, -20.0],
-            [20.0, 20.0],
+            [-20.0] * 4,
+            [20.0] * 4,
             dofs_idx_local=self.wheel_dofs,
         )
 
@@ -170,7 +195,7 @@ class DynamicDifferentialDriveCar:
         left_linear = linear_velocity - 0.5 * self.wheel_base * angular_velocity
         right_linear = linear_velocity + 0.5 * self.wheel_base * angular_velocity
         return np.asarray(
-            [left_linear, right_linear],
+            [left_linear, left_linear, right_linear, right_linear],
             dtype=np.float32,
         ) / self.wheel_radius
 
@@ -180,13 +205,13 @@ class DynamicDifferentialDriveCar:
         return targets
 
     def stop(self) -> None:
-        self.entity.control_dofs_velocity(np.zeros(2, dtype=np.float32), dofs_idx_local=self.wheel_dofs)
+        self.entity.control_dofs_velocity(np.zeros(4, dtype=np.float32), dofs_idx_local=self.wheel_dofs)
 
     def reset(self) -> None:
         self.entity.set_pos(self.initial_position)
         self.entity.set_quat(self.initial_quat)
         self.entity.set_dofs_position(
-            np.zeros(2, dtype=np.float32),
+            np.zeros(4, dtype=np.float32),
             dofs_idx_local=self.wheel_dofs,
             zero_velocity=True,
         )
@@ -199,15 +224,15 @@ class DynamicDifferentialDriveCar:
         return self.entity.get_quat()
 
     def get_wheel_positions(self) -> np.ndarray:
-        return np.asarray(tensor_to_array(self.entity.get_dofs_position(self.wheel_dofs))).reshape(2)
+        return np.asarray(tensor_to_array(self.entity.get_dofs_position(self.wheel_dofs))).reshape(4)
 
     def get_wheel_velocities(self) -> np.ndarray:
-        return np.asarray(tensor_to_array(self.entity.get_dofs_velocity(self.wheel_dofs))).reshape(2)
+        return np.asarray(tensor_to_array(self.entity.get_dofs_velocity(self.wheel_dofs))).reshape(4)
 
 
 @dataclass
 class WheelOdometry:
-    """Planar odometry integrated from the two continuous wheel joints."""
+    """Planar odometry integrated from the four continuous wheel joints."""
 
     car: DynamicDifferentialDriveCar
     position: np.ndarray
@@ -227,8 +252,8 @@ class WheelOdometry:
         self.previous_wheel_positions = current.copy()
 
         # For this authored URDF, positive joint motion means forward +X.
-        left_distance = float(delta[0]) * self.car.wheel_radius
-        right_distance = float(delta[1]) * self.car.wheel_radius
+        left_distance = float(np.mean(delta[list(self.car.left_wheel_indices)])) * self.car.wheel_radius
+        right_distance = float(np.mean(delta[list(self.car.right_wheel_indices)])) * self.car.wheel_radius
         linear_distance = 0.5 * (left_distance + right_distance)
         angular_distance = (right_distance - left_distance) / self.car.wheel_base
 
@@ -285,11 +310,12 @@ def build_scene(args: argparse.Namespace):
         name="custom_diff_drive_car",
     )
     base_link = robot.get_link("base_link")
+    car_config = CarConfig(wheel_radius=0.13, wheel_base=0.64)
     car = DynamicDifferentialDriveCar(
         entity=robot,
         base_link=base_link,
-        wheel_radius=0.12,
-        wheel_base=0.58,
+        wheel_radius=car_config.wheel_radius,
+        wheel_base=car_config.wheel_base,
         initial_position=np.asarray(INITIAL_URDF_POSITION, dtype=np.float32),
     )
 
@@ -299,7 +325,7 @@ def build_scene(args: argparse.Namespace):
             pattern=gs.sensors.SphericalPattern(angles=(lidar_angles, [0.0])),
             entity_idx=robot.idx,
             link_idx_local=base_link.idx_local,
-            pos_offset=(0.60, 0.0, 0.23),
+            pos_offset=(0.56, 0.0, 0.38),
             max_range=6.0,
             return_points=False,
         )
@@ -309,7 +335,7 @@ def build_scene(args: argparse.Namespace):
             pattern=gs.sensors.DepthCameraPattern(res=(128, 96), fov_horizontal=90.0),
             entity_idx=robot.idx,
             link_idx_local=base_link.idx_local,
-            pos_offset=(0.60, 0.0, 0.23),
+            pos_offset=(0.56, 0.0, 0.38),
             max_range=6.0,
             return_world_frame=False,
         )
@@ -318,7 +344,7 @@ def build_scene(args: argparse.Namespace):
         gs.sensors.IMU(
             entity_idx=robot.idx,
             link_idx_local=base_link.idx_local,
-            pos_offset=(0.0, 0.0, 0.23),
+            pos_offset=(0.0, 0.0, 0.38),
             acc_noise=(0.01, 0.01, 0.01),
             gyro_noise=(0.005, 0.005, 0.005),
             delay=args.dt,
@@ -350,8 +376,8 @@ def build_scene(args: argparse.Namespace):
     car.configure_velocity_control()
     if robot_rgb_camera is not None:
         robot_camera_offset = pos_lookat_up_to_T(
-            np.array((0.60, 0.0, 0.23), dtype=np.float32),
-            np.array((1.60, 0.0, 0.23), dtype=np.float32),
+            np.array((0.56, 0.0, 0.38), dtype=np.float32),
+            np.array((1.56, 0.0, 0.38), dtype=np.float32),
             np.array((0.0, 0.0, 1.0), dtype=np.float32),
         )
         robot_rgb_camera.attach(base_link, robot_camera_offset)
@@ -362,7 +388,55 @@ def build_scene(args: argparse.Namespace):
 def navigation_waypoints(scenario: str) -> tuple[tuple[float, float], ...]:
     if scenario == "room_obstacle":
         return URDF_SHOWCASE_WAYPOINTS
+    if scenario == "room_center_obstacle":
+        return URDF_CENTER_OBSTACLE_WAYPOINTS
     return waypoints_for_scenario(scenario)
+
+
+def four_wheel_geometry_collision(
+    position: np.ndarray,
+    room: RoomConfig,
+    obstacle_specs: tuple[tuple[tuple[float, float], tuple[float, float, float]], ...],
+) -> bool:
+    """Conservative footprint check matching the new four-wheel URDF."""
+    body_half_x, body_half_y = 0.39, 0.36
+    if position[0] < -room.length / 2.0 + body_half_x or position[0] > room.length / 2.0 - body_half_x:
+        return True
+    if position[1] < -room.width / 2.0 + body_half_y or position[1] > room.width / 2.0 - body_half_y:
+        return True
+
+    for (obstacle_x, obstacle_y), (size_x, size_y, _) in obstacle_specs:
+        overlaps_x = abs(position[0] - obstacle_x) < size_x / 2.0 + body_half_x
+        overlaps_y = abs(position[1] - obstacle_y) < size_y / 2.0 + body_half_y
+        if overlaps_x and overlaps_y:
+            return True
+    return False
+
+
+def boundary_guard(
+    position: np.ndarray,
+    yaw: float,
+    linear_speed: float,
+    angular_speed: float,
+    room: RoomConfig,
+    dt: float,
+) -> tuple[float, float, bool]:
+    """Stop and turn inward before a command can drive the footprint to a wall."""
+    safety_x, safety_y = 0.55, 0.52
+    predicted = position[:2] + dt * linear_speed * np.asarray((math.cos(yaw), math.sin(yaw)))
+    near_boundary = (
+        predicted[0] < -room.length / 2.0 + safety_x
+        or predicted[0] > room.length / 2.0 - safety_x
+        or predicted[1] < -room.width / 2.0 + safety_y
+        or predicted[1] > room.width / 2.0 - safety_y
+    )
+    if not near_boundary:
+        return linear_speed, angular_speed, False
+
+    inward_heading = math.atan2(-float(position[1]), -float(position[0]))
+    heading_error = (inward_heading - yaw + math.pi) % (2.0 * math.pi) - math.pi
+    inward_turn = float(np.clip(2.5 * heading_error, -1.5, 1.5))
+    return 0.0, inward_turn, True
 
 
 def save_rgb(rgb: np.ndarray, path: Path) -> None:
@@ -403,12 +477,21 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             (args.output_dir / directory).mkdir(exist_ok=True)
 
     scene, car, lidar, depth_camera, imu, overview_camera, robot_rgb_camera, obstacle_specs = build_scene(args)
+    car_config = CarConfig(wheel_radius=0.13, wheel_base=0.64)
     controller = DifferentialDriveController(
-        CarConfig(),
+        car_config,
         waypoints=navigation_waypoints(args.scenario),
-        enable_detour=args.scenario in ("room_obstacle", "room_center_obstacle"),
+        # Obstacle scenarios use explicit, collision-free showcase corridors.
+        # LiDAR remains in the observation stream and its safety layer is still
+        # available for a future local-planner pass.
+        enable_detour=False,
         dt=args.dt,
     )
+    if args.scenario == "room_center_obstacle":
+        # This preset already contains explicit bypass waypoints. The old
+        # stop-and-spin threshold would otherwise override that planned bypass
+        # before the vehicle reaches the first lateral waypoint.
+        controller.lidar_safety_distance = 0.0
     odometry = WheelOdometry(
         car=car,
         position=np.asarray(INITIAL_POSITION[:2], dtype=np.float32),
@@ -437,7 +520,29 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         )
 
         for step in range(args.steps):
-            linear_speed, angular_speed, reached = controller.command_from_observation(observation)
+            controller_observation = observation
+            if args.control_pose == "ground_truth":
+                # Keep wheel odometry in the public observation/log, but use the
+                # simulated base pose for this first dynamic-URDF showcase. The
+                # four-wheel skid-steer contact model still needs slip calibration
+                # before encoder-only navigation is a fair regression.
+                controller_observation = dict(observation)
+                robot_pose = np.asarray(observation["robot_pose"], dtype=np.float32)
+                controller_observation["odom_pose"] = np.asarray(
+                    [robot_pose[0], robot_pose[1], robot_pose[3]],
+                    dtype=np.float32,
+                )
+            linear_speed, angular_speed, reached = controller.command_from_observation(controller_observation)
+            actual_position = np.asarray(observation["robot_pose"][:3], dtype=np.float32)
+            actual_yaw = float(observation["robot_pose"][3])
+            linear_speed, angular_speed, boundary_guarded = boundary_guard(
+                actual_position,
+                actual_yaw,
+                linear_speed,
+                angular_speed,
+                room_config,
+                args.dt,
+            )
             action = {
                 "linear_velocity": float(linear_speed),
                 "angular_velocity": float(angular_speed),
@@ -475,9 +580,13 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
             distance_to_target = float(np.linalg.norm(np.asarray(controller.target) - position[:2]))
             distance_to_waypoint = float(np.linalg.norm(np.asarray(controller.current_target) - position[:2]))
-            collided = geometry_collision(position, room_config, obstacle_specs)
+            collided = four_wheel_geometry_collision(position, room_config, obstacle_specs)
             wheel_positions = car.get_wheel_positions()
             wheel_velocities = car.get_wheel_velocities()
+            left_wheel_target = float(np.mean(wheel_targets[list(car.left_wheel_indices)]))
+            right_wheel_target = float(np.mean(wheel_targets[list(car.right_wheel_indices)]))
+            left_wheel_velocity = float(np.mean(wheel_velocities[list(car.left_wheel_indices)]))
+            right_wheel_velocity = float(np.mean(wheel_velocities[list(car.right_wheel_indices)]))
 
             if args.save_sensors:
                 sensor_records.append(
@@ -492,8 +601,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                         "action_step": step,
                         "info": {
                             "scenario": args.scenario,
+                            "control_pose": args.control_pose,
                             "waypoint_idx": controller.waypoint_idx,
                             "detour_phase": controller.detour_phase,
+                            "boundary_guarded": boundary_guarded,
                             "distance_to_target": distance_to_target,
                             "distance_to_waypoint": distance_to_waypoint,
                             "reached": bool(reached),
@@ -521,10 +632,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                         "waypoint_idx": controller.waypoint_idx,
                         "linear_command": linear_speed,
                         "angular_command": angular_speed,
-                        "left_wheel_target": float(wheel_targets[0]),
-                        "right_wheel_target": float(wheel_targets[1]),
-                        "left_wheel_velocity": float(wheel_velocities[0]),
-                        "right_wheel_velocity": float(wheel_velocities[1]),
+                        "boundary_guarded": boundary_guarded,
+                        "left_wheel_target": left_wheel_target,
+                        "right_wheel_target": right_wheel_target,
+                        "left_wheel_velocity": left_wheel_velocity,
+                        "right_wheel_velocity": right_wheel_velocity,
                         "front_min_lidar": front_min_lidar,
                         "robot_rgb_frame": frame_id,
                         "depth_frame": frame_id,
@@ -538,8 +650,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     f"step={observation_step:04d} pos=({position[0]:+.2f},{position[1]:+.2f}) "
                     f"odom=({odometry.position[0]:+.2f},{odometry.position[1]:+.2f}) "
                     f"target_dist={distance_to_target:.2f} waypoint={controller.waypoint_idx} "
-                    f"lidar_front_min={front_min_lidar:.2f} "
-                    f"wheel=({wheel_velocities[0]:+.2f},{wheel_velocities[1]:+.2f})"
+                    f"lidar_front_min={front_min_lidar:.2f} guard={boundary_guarded} "
+                    f"wheel=({left_wheel_velocity:+.2f},{right_wheel_velocity:+.2f})"
                 )
 
             if reached or collided:
@@ -577,6 +689,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "target_y": target_for_scenario(args.scenario)[1],
             "front_min_lidar": float(np.min(last_lidar[front_mask])),
             "wheel_dofs": car.wheel_dofs,
+            "control_pose": args.control_pose,
             "urdf": str(URDF_PATH),
             "backend": "gpu" if args.gpu else "cpu",
             "telemetry_file": str(telemetry_path),

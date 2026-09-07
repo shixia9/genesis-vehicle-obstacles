@@ -14,7 +14,7 @@
 
 RGB 相机使用稳定的房间总览视角，便于观察小车、障碍物和目标点；深度相机保持车载前向视角，作为算法传感器输出。
 
-注意：第一版为了稳定验证闭环，车体和车轮是固定 Genesis 几何体，由差速运动学推进；`assets/diff_drive_car.urdf` 已保留，后续校准质量、轮轴、摩擦和接触后再切换到动态 URDF。
+注意：第一版为了稳定验证闭环，车体和车轮是固定 Genesis 几何体，由差速运动学推进；`assets/diff_drive_car.urdf` 是后续动态实验使用的四轮滑移转向模型。
 
 ## 运行
 
@@ -122,3 +122,23 @@ env.close()
 ```
 
 `sensor_observations.jsonl` 中每条记录的 `observation` 是动作执行后的下一时刻观测，`action_step` 标明产生该观测的动作所在步；这样图像、传感器、位姿和动作不会被误认为来自同一物理时刻。CLI 运行时可用 `--save-sensors` 保存这些记录。
+
+## 四轮 URDF 动力学实验
+
+新增的 [room_navigation_urdf.py](room_navigation_urdf.py) 使用四个连续轮关节：左侧前后轮同步、右侧前后轮同步，车体通过 Genesis 动力学和轮胎接触运动。四轮编码器会生成轮里程计，RGB、深度相机、LiDAR 和 IMU 仍安装在 URDF 的 `base_link` 上。
+
+推荐先运行无障碍动力学回归：
+
+```bash
+python examples/mobile_robot/room_navigation_urdf.py --steps 1200
+```
+
+障碍物展示场景使用预先规划的安全绕行航点，并增加场景边界保护：
+
+```bash
+python examples/mobile_robot/room_navigation_urdf.py \
+  --vis --robot-view --save-sensors \
+  --scenario room_obstacle --steps 1400
+```
+
+由于四轮滑移转向的轮胎接触参数仍在校准，动态展示默认使用 Genesis 车体实际位姿进行高层航点控制，同时记录轮编码器里程计。使用 `--control-pose wheel_odom` 可以专门测试未经校准的轮里程计控制效果。
