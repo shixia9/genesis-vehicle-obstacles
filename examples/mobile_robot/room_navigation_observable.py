@@ -79,6 +79,12 @@ SHOWCASE_WAYPOINTS = (
     (2.8, -0.8),
     (2.8, 1.7),
 )
+CENTER_OBSTACLE_WAYPOINTS = (
+    INITIAL_POSITION[:2],
+    (-1.2, -1.8),
+    (-1.2, 1.2),
+    (2.8, 1.7),
+)
 WAYPOINTS = DEFAULT_WAYPOINTS
 TARGET_POSITION = WAYPOINTS[-1]
 
@@ -121,7 +127,7 @@ SCENARIO_WAYPOINTS = {
     "default": DEFAULT_WAYPOINTS,
     "room_basic": DEFAULT_WAYPOINTS,
     "room_obstacle": SHOWCASE_WAYPOINTS,
-    "room_center_obstacle": DEFAULT_WAYPOINTS,
+    "room_center_obstacle": CENTER_OBSTACLE_WAYPOINTS,
 }
 
 
