@@ -125,7 +125,7 @@ env.close()
 
 ## 视觉控制展示：沿途识别物体
 
-[room_navigation_vision.py](room_navigation_vision.py) 是当前视觉/控制主线入口：小车按简易 waypoint + LiDAR 策略驶向既定目的地，同时在车载 RGB 视角中持续产生检测结果。该入口不依赖 LLM；LLM 任务另见 [TASK_LLM.md](TASK_LLM.md)。完整需求、TODO 和验收标准见 [TASK.md](TASK.md)。
+[room_navigation_vision.py](room_navigation_vision.py) 是当前视觉/控制主线入口：小车按简易 waypoint + LiDAR 策略驶向既定目的地，同时在车载 RGB 视角中持续产生检测结果。该入口不依赖 LLM；LLM 任务另见 [TASK_LLM.md](TASK_LLM.md)。完整基线需求和验收标准见 [TASK.md](TASK.md)；面向任意自然语言目标的后续主线已调整为开放词汇视觉指代，分阶段计划见 [TODO.md](TODO.md)。
 
 使用确定性的 Genesis 真值感知后端联调运行时、叠加和日志：
 

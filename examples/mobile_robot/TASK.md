@@ -5,6 +5,8 @@
 > 当前验收故事：小车按照现有简易导航策略驶向既定目的地，并在行驶全过程持续识别沿途不同物体，实时展示并记录识别结果，最终安全到达。
 >
 > LLM 工作流：已拆分到 [TASK_LLM.md](TASK_LLM.md)，不作为当前视觉控制任务的前置条件。
+>
+> 后续方向调整：本文记录的闭集 YOLO 是已经完成的视觉/控制基线，不是任意自然语言目标的最终方案。开放词汇视觉指代与自然语言语义导航的最新计划以 [TODO.md](TODO.md) 为准。
 
 ## 1. 当前阶段目标
 
@@ -76,10 +78,12 @@
 
 ```json
 {
-  "intent": "navigate_near_object",
+  "intent": "navigate_near_reference",
   "target": {
-    "category": "car",
-    "attributes": {"color": "yellow"}
+    "referring_expression": "黄色小车",
+    "head_noun": "小车",
+    "attributes": {"color": "黄色"},
+    "relations": []
   },
   "constraints": {
     "near_distance_m": 0.8,
@@ -92,7 +96,10 @@
 
 ```text
 TASK_ACCEPTED
-TARGET_ACQUIRED
+SEARCHING_TARGET
+CANDIDATE_FOUND
+AMBIGUOUS_TARGET
+TARGET_CONFIRMED
 PATH_PLANNED
 EXECUTING
 ARRIVED
@@ -494,13 +501,13 @@ examples/mobile_robot/
 
 **验收：** 视觉故障不导致碰撞或控制进程异常；端到端指标达到第 13 节要求。
 
-### VC6：为 LLM/语义导航预留接口（后续集成）
+### VC6：为开放词汇 LLM/语义导航预留接口（后续集成）
 
-- [ ] 输出稳定的 `SemanticObject[]`，包含类别、属性、位置、时间和数据源。
-- [ ] 提供 `list_visible_objects()` 和 `get_task_status()` 查询接口。
+- [ ] 输出稳定的 `GroundingCandidate[]/GroundedTarget`，包含原始指代表达、视觉证据、位置、时间和数据源。
+- [ ] 提供 `list_grounding_candidates()` 和 `get_task_status()` 查询接口。
 - [ ] 接收经过校验的 `TaskSpec`，不接收自然语言和任意代码。
-- [ ] 实现 `navigate_near_object()` 前先接 Fake TaskSpec 测试。
-- [ ] 增加黄色目标搜索、目标附近停车位和 A*；这些不属于当前“固定目的地沿途识别”P0。
+- [ ] 实现 `navigate_near_reference()` 前先接 Fake TaskSpec 和 Fake Grounder 测试。
+- [ ] 增加开放词汇目标搜索、多候选澄清、目标附近停车位和 A*；这些不属于当前“固定目的地沿途识别”P0。
 - [ ] 与 LLM 使用 mock 做契约测试，双方不依赖对方真实服务开发。
 
 **验收：** LLM 接入时不需要改动相机、检测器、控制动作和日志基础协议。
