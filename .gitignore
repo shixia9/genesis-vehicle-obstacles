@@ -165,4 +165,4 @@ outputs/
 /benchmarks/
 
 # Local prompt
-/examples/mobile_robot/_docs/
+/examples/mobile_robot/_*/
