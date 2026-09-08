@@ -153,6 +153,35 @@ class RgbdCalibration:
         point_h = np.concatenate((point_depth, [1.0]))
         return (self.robot_from_depth @ point_h)[:3]
 
+    def camera_pose_from_robot_pose(self, robot_pose: tuple[float, ...] | np.ndarray) -> tuple[float, float, float, float]:
+        """Return the calibrated camera ``(x, y, z, yaw)`` world pose.
+
+        ``FramePacket.camera_pose`` represents the optical centre, not the
+        vehicle base.  Keeping the mount translation in this conversion makes
+        ground-truth projection and runtime metadata agree with the rendered
+        RGB stream (the showcase camera is mounted 0.60 m ahead of the base).
+        """
+
+        pose = np.asarray(robot_pose, dtype=np.float64).reshape(-1)
+        if pose.size < 4:
+            raise ValueError("robot_pose must contain x, y, z, yaw")
+        yaw = float(pose[3])
+        cos_yaw = math.cos(yaw)
+        sin_yaw = math.sin(yaw)
+        robot_rotation = np.array(
+            [[cos_yaw, -sin_yaw, 0.0], [sin_yaw, cos_yaw, 0.0], [0.0, 0.0, 1.0]],
+            dtype=np.float64,
+        )
+        camera_offset = robot_rotation @ self.robot_from_depth[:3, 3]
+        camera_rotation = robot_rotation @ self.robot_from_depth[:3, :3]
+        camera_yaw = math.atan2(float(camera_rotation[1, 0]), float(camera_rotation[0, 0]))
+        return (
+            float(pose[0] + camera_offset[0]),
+            float(pose[1] + camera_offset[1]),
+            float(pose[2] + camera_offset[2]),
+            camera_yaw,
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "source": self.source,

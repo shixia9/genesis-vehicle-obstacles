@@ -37,8 +37,18 @@ def dominant_color(image: np.ndarray, bbox_xyxy: tuple[float, float, float, floa
     if not np.any(valid):
         return None, 0.0
 
+    # Genesis materials can appear considerably darker than their nominal
+    # colors under the attached camera lighting (the yellow car is commonly
+    # around RGB=(80, 70, 13)).  Use chroma ratios for yellow instead of fixed
+    # channel floors, while keeping a brightness/saturation gate above.
     masks = {
-        "yellow": valid & (red > 100.0) & (green > 90.0) & (blue < 120.0) & (red > blue * 1.15),
+        "yellow": (
+            valid
+            & (red > blue * 1.8)
+            & (green > blue * 1.8)
+            & (red >= green * 0.65)
+            & (green >= red * 0.55)
+        ),
         "red": valid & (red > green * 1.35) & (red > blue * 1.35),
         "green": valid & (green > red * 1.25) & (green > blue * 1.15),
         "blue": valid & (blue > red * 1.25) & (blue > green * 1.10),

@@ -44,6 +44,23 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         verbose=False,
     )
     box = metrics.box
+    names = getattr(metrics, "names", None) or getattr(model, "names", None) or {}
+    if isinstance(names, dict):
+        class_names = [str(names[index]) for index in range(len(names))]
+    else:
+        class_names = [str(value) for value in names]
+
+    def _per_class(values: Any) -> list[float]:
+        """Convert Ultralytics' per-class arrays to JSON-safe floats."""
+
+        if values is None:
+            return []
+        return [float(value) for value in values]
+
+    per_class_precision = _per_class(getattr(box, "p", None))
+    per_class_recall = _per_class(getattr(box, "r", None))
+    per_class_map50 = _per_class(getattr(box, "ap50", None))
+    per_class_map50_95 = _per_class(getattr(box, "ap", None))
     split_images = list((args.data.parent / "images" / args.split).glob("*.png"))
     summary = {
         "model": str(args.model.resolve()),
@@ -54,8 +71,25 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "recall": float(box.mr),
         "map50": float(box.map50),
         "map50_95": float(box.map),
-        "per_class_map50": [float(value) for value in box.ap50],
-        "per_class_map50_95": [float(value) for value in box.ap],
+        "class_names": class_names,
+        "per_class_precision": per_class_precision,
+        "per_class_recall": per_class_recall,
+        "per_class_map50": per_class_map50,
+        "per_class_map50_95": per_class_map50_95,
+        "per_class_threshold_0_90": {
+            class_names[index] if index < len(class_names) else str(index): {
+                "precision": per_class_precision[index] if index < len(per_class_precision) else None,
+                "recall": per_class_recall[index] if index < len(per_class_recall) else None,
+                "map50": per_class_map50[index] if index < len(per_class_map50) else None,
+                "passed": (
+                    index < len(per_class_precision)
+                    and index < len(per_class_recall)
+                    and per_class_precision[index] >= 0.90
+                    and per_class_recall[index] >= 0.90
+                ),
+            }
+            for index in range(max(len(class_names), len(per_class_precision), len(per_class_recall)))
+        },
         "speed_ms": {key: float(value) for key, value in metrics.speed.items()},
     }
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -73,4 +107,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -1,0 +1,12 @@
+{
+  "data": "/Users/vamos/Documents/dev/genesis-world/genesis-vehicle-obstacles/datasets/mobile_robot_yolo_full_v2/dataset.yaml",
+  "model_config": "yolo11n.yaml",
+  "pretrained": false,
+  "epochs": 20,
+  "imgsz": 256,
+  "batch": 16,
+  "device": "cpu",
+  "save_dir": "/Users/vamos/Documents/dev/genesis-world/genesis-vehicle-obstacles/models/mobile_robot/training_full_v2/yolo11n_custom",
+  "best_weights": "/Users/vamos/Documents/dev/genesis-world/genesis-vehicle-obstacles/models/mobile_robot/training_full_v2/yolo11n_custom/weights/best.pt",
+  "weights_exists": true
+}

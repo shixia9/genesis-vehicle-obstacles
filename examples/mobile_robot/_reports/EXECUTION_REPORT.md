@@ -23,7 +23,9 @@ room_navigation_vision.py
     └── 模型缺失或推理异常时安全降级
 ```
 
-纯 Python 的视觉协议、投影、跟踪、颜色/深度辅助和 LiDAR 控制测试已通过。在受限沙箱中 Genesis 无法创建 OpenGL context，但经授权在宿主环境完成了完整 ground-truth 视觉/控制回归。真实 YOLO 权重仍未在仓库中提供，因此本报告不把 ground-truth 联调结果冒充 YOLO 识别结果。
+纯 Python 的视觉协议、投影、跟踪、颜色/深度辅助和 LiDAR 控制测试已通过。在受限沙箱中 Genesis 无法创建 OpenGL context，但经授权在宿主环境完成了 ground-truth 与真实 YOLO 闭环回归。YOLO 权重由 Genesis 真值分割数据随机初始化训练得到，指标和限制见第 5.7 节；它尚未达到每类 90% 召回门槛，因此暂不标记为最终生产模型。
+
+> 最新执行结果（同日追加）以第 5.7 节和第 6 节为准；第 5 节之前关于“尚无本地权重”的描述是初始执行记录。
 
 ## 2. 需求分析结果
 
@@ -77,6 +79,7 @@ room_navigation_vision.py
 - `vision/attributes.py`：保守 RGB ROI 主色判断；
 - `vision/rgbd_fusion.py`：保留归一化 bbox 的兼容性近似采样；
 - `vision/rgbd_calibration.py`：读取 Genesis RGB/Depth 真实内参和同挂载外参，执行精确 bbox 重投影、深度统计和坐标融合；
+- `vision/evaluate_runtime.py`：离线按帧评估类别、颜色、距离、世界坐标、跟踪碎片和延迟 P95；
 - `Detection.track_id` 与叠加标签扩展；
 - `vision/__init__.py` 导出运行时所需组件。
 
@@ -85,6 +88,14 @@ room_navigation_vision.py
 `genesis/utils/misc.py` 的 CPU 设备识别原先假设 `cpuinfo` 必有 `brand_raw/hardware_raw/vendor_id_raw`，当前机器返回空值时触发 `StopIteration`。现改为依次回退到 `platform.processor()` 和 `unknown-cpu`，使 `get_device(gs.cpu)` 在该环境下可以返回 CPU 设备。
 
 这属于初始化兼容性修复，与视觉逻辑无关，但否则所有 Genesis 示例都无法进入场景构建阶段。
+
+### 3.5 自定义 YOLO 数据与运行评估
+
+- Genesis entity segmentation 自动生成 YOLO Detection 数据集：
+  `datasets/mobile_robot_yolo_full_v2/`，共 1205 张图（595 张空目标负样本），标签错误 0；类别为 `car`、`box_obstacle`、`cylinder_obstacle`，颜色仍由 RGB ROI 模块判断。
+- 使用 `yolo11n.yaml`、CPU、随机初始化、无外部预训练权重训练 20 epoch；权重为 [best.pt](../../../models/mobile_robot/training_full_v2/yolo11n_custom/weights/best.pt)，SHA-256 为 `2a29b22c2203f8aac3a99c5ffb68f992829d67e48ea93076a54dba288685d26d`。
+- 新增 [evaluate_yolo.py](../vision/evaluate_yolo.py) 的每类 precision/recall 输出，以及 [evaluate_runtime.py](../vision/evaluate_runtime.py) 的离线运行评估。评估器只读取真值日志，不把真值注入运行时检测器。
+- 修正 `FramePacket.camera_pose` 使用 Genesis RGB-D 标定的相机光心外参；同时放宽暗黄色材质的色差判定，确保“黄色小车”在实际渲染亮度下可识别。
 
 ### 3.5 README 与测试
 
@@ -121,13 +132,14 @@ room_navigation_vision.py
 .venv/bin/python examples/mobile_robot/room_navigation_vision.py \
   --scenario vision_route_showcase \
   --perception-mode yolo \
-  --vision-model models/mobile_robot/car_obstacle.pt \
+  --vision-model models/mobile_robot/training_full_v2/yolo11n_custom/weights/best.pt \
   --vision-device cpu \
+  --calibrated-depth \
   --save-vision \
   --output-dir out/mobile_robot_vision_yolo
 ```
 
-当前仓库没有 `models/mobile_robot/car_obstacle.pt`，因此该命令在没有外部权重时会安全降级，不会自动下载模型。
+该命令使用本地 full_v2 权重；程序不会联网下载模型。若显式指定不存在的路径，仍会安全降级并记录 `model_path_missing`。
 
 ## 5. 测试执行记录
 
@@ -137,7 +149,7 @@ room_navigation_vision.py
 | -------------------- | --------------------------------------------------------------------------------------------------- | -------------------------- |
 | Python 编译检查      | `.venv/bin/python -m compileall -q examples/mobile_robot genesis/utils/misc.py`                   | 通过                       |
 | 模块导入和数据契约   | `FramePacket/Detection/VisionResult/ObjectTracker` 直接调用                                       | 通过                       |
-| 视觉单元测试         | `.venv/bin/python -m pytest -q -o addopts='' examples/mobile_robot/tests/test_vision_pipeline.py` | 5 passed                   |
+| 视觉单元测试         | `.venv/bin/python -m pytest -q -o addopts='' examples/mobile_robot/tests/test_vision_pipeline.py` | 7 passed                   |
 | GroundTruth 前向投影 | 前方物体保留、后方物体过滤                                                                          | 通过                       |
 | 跟踪 ID              | 相邻帧同一世界位置保持`track-001`                                                                 | 通过                       |
 | 颜色辅助             | 黄色 ROI 置信度判断                                                                                 | 通过                       |
@@ -244,18 +256,18 @@ No OpenGL renderer is available on this machine.
 
 执行结果：
 
-| 指标 | 结果 |
-| --- | ---: |
-| Viewer / 车载 RGB 窗口 | 均成功启动 |
-| 实际仿真步数 | 1126 |
-| 到达 | `true` |
-| 碰撞 | `false` |
-| 终止原因 | `reached` |
-| 视觉帧 / 推理次数 | 45 / 45 |
-| 检测总数 | 25 |
-| 稳定轨迹数 | 3 |
-| 类别覆盖 | `car` 4、`box_obstacle` 11、`cylinder_obstacle` 10 |
-| 视觉异常 | 0 |
+| 指标                   |                                                     结果 |
+| ---------------------- | -------------------------------------------------------: |
+| Viewer / 车载 RGB 窗口 |                                               均成功启动 |
+| 实际仿真步数           |                                                     1126 |
+| 到达                   |                                                 `true` |
+| 碰撞                   |                                                `false` |
+| 终止原因               |                                              `reached` |
+| 视觉帧 / 推理次数      |                                                  45 / 45 |
+| 检测总数               |                                                       25 |
+| 稳定轨迹数             |                                                        3 |
+| 类别覆盖               | `car` 4、`box_obstacle` 11、`cylinder_obstacle` 10 |
+| 视觉异常               |                                                        0 |
 
 该次运行确认 GUI 可视化链路和控制闭环均可用。终端出现的 Genesis 主线程交互提示以及 macOS AVFoundation 动态库重复提示不影响本次退出码（0）或上述结果。输出目录包含 `vision_results.jsonl`、标注图片和 `summary.json`；车载窗口显示附着相机的 RGB 视角。
 
@@ -284,7 +296,7 @@ No OpenGL renderer is available on this machine.
 - RGB bbox 通过两套 pinhole 内参投影到 Depth 像素，再用有效深度中位数、MAD、有效像素数计算距离置信度；同时输出相机、机器人和世界坐标；
 - 每次运行保存 `camera_calibration.json`，视觉 JSONL 的 `depth_alignment` 在启用 `--calibrated-depth` 时标记为 `calibrated_pinhole`。原 `--approx-depth` 保留为兼容性降级路径。
 
-更新后的完整 ground-truth 回归仍为 1126 步到达、0 碰撞、0 视觉异常；使用真实 RGB 内参后检测总数为 35（`car` 5、`box_obstacle` 14、`cylinder_obstacle` 16）。纯 Python 视觉测试更新为 `6 passed`。
+初始相机原点口径的回归曾记录 35 个检测；修正相机安装外参后，校正 ground-truth 参考回归为 1126 步到达、0 碰撞、0 视觉异常、22 个几何投影检测（`car` 4、`box_obstacle` 10、`cylinder_obstacle` 8）。纯 Python 视觉测试更新为 `7 passed`。
 
 回归命令：
 
@@ -296,36 +308,107 @@ No OpenGL renderer is available on this machine.
   --output-dir /tmp/mobile_robot_vision_gt_calibrated
 ```
 
+### 5.7 扩展 YOLO 训练、独立 test 与真实闭环
+
+训练命令：
+
+```bash
+.venv/bin/python -m examples.mobile_robot.vision.train_yolo \
+  --data datasets/mobile_robot_yolo_full_v2/dataset.yaml \
+  --output-dir models/mobile_robot/training_full_v2 \
+  --epochs 20 --imgsz 256 --batch 16 --device cpu --workers 0
+```
+
+独立 test 命令：
+
+```bash
+.venv/bin/python -m examples.mobile_robot.vision.evaluate_yolo \
+  --model models/mobile_robot/training_full_v2/yolo11n_custom/weights/best.pt \
+  --data datasets/mobile_robot_yolo_full_v2/dataset.yaml \
+  --split test --imgsz 256 --batch 16 --device cpu \
+  --output-dir models/mobile_robot/training_full_v2
+```
+
+独立 test（151 张图、104 个实例）结果：
+
+| 类别                  | Precision | Recall | mAP50 | 是否达到 P/R ≥90% |
+| --------------------- | --------: | -----: | ----: | ------------------ |
+| `car`               |     0.983 |  1.000 | 0.995 | 是                 |
+| `box_obstacle`      |     0.919 |  0.806 | 0.886 | 否                 |
+| `cylinder_obstacle` |     0.948 |  0.889 | 0.947 | 否                 |
+| 总体                  |     0.950 |  0.898 | 0.943 | 否                 |
+
+宿主 OpenGL 环境真实 YOLO 闭环命令：
+
+```bash
+.venv/bin/python examples/mobile_robot/room_navigation_vision.py \
+  --steps 1200 --scenario vision_route_showcase --perception-mode yolo \
+  --vision-model models/mobile_robot/training_full_v2/yolo11n_custom/weights/best.pt \
+  --vision-device cpu --vision-conf 0.5 --vision-imgsz 256 --vision-every 25 \
+  --calibrated-depth --save-vision --log-every 200 \
+  --output-dir out/mobile_robot_yolo_full_v2
+```
+
+闭环结果：1126 步到达、0 碰撞、0 超时、45/45 视觉推理、0 视觉异常、26 个检测；类别检测数为 `car=5`、`box_obstacle=10`、`cylinder_obstacle=11`。模型推理延迟 P50/P95/max 为 `19.33/42.00/875.31 ms`（CPU，首帧 warm-up 包含在 max 中），颜色输出为黄色/红色/蓝色均正确。RGB-D 日志标记为 `depth_alignment=calibrated_pinhole`。
+
+使用同 seed 的校正相机 ground-truth 日志做离线世界坐标匹配（阈值 0.75 m，输出见 `out/mobile_robot_yolo_full_v2/runtime_metrics.json`）：
+
+| 类别                  | 位置匹配 Precision | 位置匹配 Recall | 平均世界坐标误差 | 颜色准确率 |
+| --------------------- | -----------------: | --------------: | ---------------: | ---------: |
+| `car`               |              0.800 |           1.000 |          0.308 m |      1.000 |
+| `box_obstacle`      |              0.700 |           0.700 |          0.330 m |      1.000 |
+| `cylinder_obstacle` |              0.636 |           0.875 |          0.278 m |      1.000 |
+
+该闭环匹配用于诊断，不替代独立 test 门槛：当前 ground-truth detector 的 bbox 是几何投影近似，运行评估因此以世界坐标匹配为主。
+
+### 5.8 当前 YOLO 权重可视化回归
+
+在宿主 OpenGL 环境开启 Genesis 总览 Viewer 与车载 RGB 窗口：
+
+```bash
+.venv/bin/python examples/mobile_robot/room_navigation_vision.py \
+  --steps 1200 --scenario vision_route_showcase --perception-mode yolo \
+  --vision-model models/mobile_robot/training_full_v2/yolo11n_custom/weights/best.pt \
+  --vision-device cpu --vision-conf 0.5 --vision-imgsz 256 --vision-every 25 \
+  --calibrated-depth --vis --robot-view --save-vision --log-every 200 \
+  --output-dir out/mobile_robot_yolo_full_v2_gui
+```
+
+Viewer 和车载 RGB 窗口均成功启动；1126 步到达、0 碰撞、45/45 推理、26 个检测、0 视觉异常。标注图和 `summary.json` 位于 `out/mobile_robot_yolo_full_v2_gui/`，证明真实 YOLO 的可视化链路已跑通；GUI 运行的 CPU 延迟受窗口负载影响（P50/P95/max=`28.54/71.13/1190.21 ms`），性能门槛仍以 headless 回归为准。
+
+示例标注帧：[frame_00025.png](../../../out/mobile_robot_yolo_full_v2_gui/rgb_robot_annotated/frame_00025.png)。
+
 ## 6. TODO 执行状态
 
-| TASK 阶段            | 状态                           | 说明                                                                    |
-| -------------------- | ------------------------------ | ----------------------------------------------------------------------- |
-| VC0 基线冻结         | 已完成（模型资源待确认）       | 路线、类别、随机种子、运动学方案和关闭视觉基线已冻结；YOLO 权重/许可证仍待确认 |
-| VC1 沿途多物体场景   | 已实现并通过 ground-truth 回归 | 3 类物体均被识别，路线到达且无碰撞                                      |
-| VC2 离线模型可行性   | 阻塞                           | 仓库无本地 YOLO 权重，需提供权重或训练合成数据                          |
-| VC3 实时边行驶边识别 | ground-truth 模式已通过        | 45 次推理、35 个检测、3 条轨迹；真实 YOLO 待权重                        |
-| VC4 颜色/距离/跟踪   | 标定已实现，YOLO 待验证        | 颜色、精确 RGB-D 投影、距离置信度、机器人/世界坐标和跟踪已实现；真实 YOLO 仍待权重 |
-| VC5 控制/安全/性能   | ground-truth 回归通过          | 1126 步到达、0 碰撞、0 视觉异常；实时性能指标仍需标准工具统计           |
-| VC6 LLM 预留接口     | 已定义                         | `TaskSpec`/事件边界已写入两份 TASK，目标导航尚未接入                  |
+| TASK 阶段            | 状态                           | 说明                                                                                            |
+| -------------------- | ------------------------------ | ----------------------------------------------------------------------------------------------- |
+| VC0 基线冻结         | 已完成                         | 路线、类别、随机种子、运动学方案和关闭视觉基线已冻结；模型 SHA-256 已记录，许可证待正式交付确认 |
+| VC1 沿途多物体场景   | 已实现并通过 ground-truth 回归 | 3 类物体均被识别，路线到达且无碰撞                                                              |
+| VC2 离线模型可行性   | 已完成但未达门槛               | full_v2 test 已完成；box/cylinder recall 分别 0.806/0.889，需数据增强或模型调整                 |
+| VC3 实时边行驶边识别 | YOLO 闭环已通过                | 45 次推理、26 个检测、0 视觉异常；到达行为与基线一致                                            |
+| VC4 颜色/距离/跟踪   | 已实现并完成 YOLO 诊断         | 三类颜色准确率 1.0；世界坐标误差约 0.28–0.33 m；box/cylinder 各有 2 条碎片轨迹                 |
+| VC5 控制/安全/性能   | YOLO 回归通过，指标待优化      | 1126 步到达、0 碰撞；推理 P50/P95=19.33/42.00 ms，首帧 max=875.31 ms                            |
+| VC6 LLM 预留接口     | 已定义                         | `TaskSpec`/事件边界已写入两份 TASK，目标导航尚未接入                                          |
 
 ## 7. 已知限制和风险
 
 1. `ground_truth` 检测器是联调工具，不能作为视觉识别验收结果；
 2. `--calibrated-depth` 已按 Genesis 已知内外参实现；`--approx-depth` 仅为兼容性降级路径，不能用于安全决策；
-3. 真实 YOLO 需要项目专用权重。简化 Box/Cylinder 不一定被 COCO 预训练模型识别；
+3. 当前自定义 YOLO 是随机初始化的仿真模型；box/cylinder 独立 test 未达到每类 90% recall，不能宣称最终模型；
 4. 当前 P0 视觉结果不直接改变导航动作，只保证 LiDAR 安全层；
 5. 受限沙箱没有 OpenGL context；宿主环境已经完成 ground-truth 回归，后续仍需在团队标准机器固定测试；
 6. URDF 四轮动力学仍应在运动学视觉闭环通过后单独校准；
-7. `pytest-xdist/pytest-timeout/ruff` 尚未齐备，正式交付前应补齐开发依赖并执行项目标准测试命令。
+7. `pytest-xdist/pytest-timeout/ruff` 尚未齐备，正式交付前应补齐开发依赖并执行项目标准测试命令；当前纯 Python 视觉回归为 7 passed。
 
 ## 8. 下一步交付顺序
 
-1. 将宿主 OpenGL 回归命令固定到团队标准机器/CI，保留 ground-truth 结果作为场景回归基线；
-2. 提供本地 YOLO 权重或用 Genesis segmentation 生成数据集并训练 `car/box_obstacle/cylinder_obstacle` 模型；
-3. 使用同一场景运行 YOLO，统计类别召回率、误检、推理 P50/P95 和丢帧；
-4. 使用本地 YOLO 权重运行 `--calibrated-depth`，验证检测框、深度和世界坐标的端到端误差；
-5. 补齐 `pytest-xdist/pytest-timeout/ruff`，执行标准测试并把结果追加到本报告；
-6. 视觉旁路稳定后，再评审视觉辅助限速/停车和 LLM `navigate_near_object` 集成。
+当前决策点：full_v2 已证明链路可用，但 box/cylinder 未达到每类 P/R ≥90%。下一轮若继续，应扩充这两类的姿态、遮挡、距离和光照样本；本报告不擅自把当前权重标记为最终模型，也不在未确认前切换模型架构或引入外部权重。
+
+1. 对 `box_obstacle`/`cylinder_obstacle` 增加姿态、遮挡、距离和光照变化，再按同一 test 协议重训；不得用当前 test 结果以外的数据调阈值。
+2. 将宿主 OpenGL 回归命令固定到团队标准机器/CI，至少覆盖 10 个固定随机种子后再宣称 P0 召回门槛；
+3. 继续校准 RGB-D 距离误差（当前闭环平均约 0.28–0.33 m，高于 P1 建议 0.20 m），优先使用 segmentation mask/ROI 而非粗 bbox；
+4. 补齐 `pytest-xdist/pytest-timeout/ruff`，执行项目默认标准测试并把结果追加到本报告；
+5. 视觉旁路稳定后，再评审视觉辅助限速/停车和 LLM `navigate_near_object` 集成。
 
 ## 9. 交付清单
 
@@ -337,7 +420,7 @@ No OpenGL renderer is available on this machine.
 - [X] 模型缺失/异常安全降级；
 - [X] 纯 Python 单元级验证；
 - [X] 有 OpenGL 机器上的 Genesis ground-truth 端到端运行报告；
-- [ ] 真实 YOLO 权重上的识别指标；
-- [X] Genesis RGB-D 标定和世界坐标融合实现/回归；真实 YOLO 下的误差报告待模型权重；
+- [X] 真实 YOLO 权重训练、独立 test 和闭环识别指标（当前 box/cylinder 未达最终门槛）；
+- [X] Genesis RGB-D 标定和世界坐标融合实现/回归；[runtime_metrics.json](../../../out/mobile_robot_yolo_full_v2/runtime_metrics.json) 已记录真实 YOLO 误差；
 - [X] 视觉单元 pytest 报告（使用 `-o addopts=''`）；
 - [ ] 项目默认 pytest + ruff 标准测试报告。

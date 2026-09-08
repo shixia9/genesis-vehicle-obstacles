@@ -29,6 +29,8 @@ from __future__ import annotations
 
 import argparse
 import csv
+from collections import Counter
+import hashlib
 import json
 import math
 import os
@@ -221,6 +223,31 @@ def _nearest_detection(result: VisionResult) -> tuple[str | None, float | None]:
     return detection.label, float(detection.distance_m)
 
 
+def _percentile(values: list[float], percentile: float) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return ordered[0]
+    position = (len(ordered) - 1) * percentile / 100.0
+    lower = math.floor(position)
+    upper = math.ceil(position)
+    if lower == upper:
+        return ordered[lower]
+    fraction = position - lower
+    return ordered[lower] + fraction * (ordered[upper] - ordered[lower])
+
+
+def _file_sha256(path: Path | None) -> str | None:
+    if path is None or not path.is_file():
+        return None
+    digest = hashlib.sha256()
+    with path.open("rb") as file:
+        for chunk in iter(lambda: file.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def run(args: argparse.Namespace) -> dict[str, Any]:
     if args.steps <= 0 or args.dt <= 0.0:
         raise ValueError("--steps and --dt must be positive")
@@ -260,6 +287,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     visual_frame_count = 0
     inference_count = 0
     detection_count = 0
+    detection_counts_by_label: Counter[str] = Counter()
+    vision_latencies_ms: list[float] = []
     vision_error_count = 0
     last_result: VisionResult | None = None
     last_vision_frame_id: int | None = None
@@ -331,7 +360,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     sim_time=float(observation["sim_time"]),
                     image=rgb,
                     camera_name="robot_rgb_camera",
-                    camera_pose=tuple(float(value) for value in observation["robot_pose"]),
+                    camera_pose=rgbd_calibration.camera_pose_from_robot_pose(observation["robot_pose"]),
                     intrinsics=(
                         rgbd_calibration.rgb.fx,
                         rgbd_calibration.rgb.fy,
@@ -376,6 +405,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 last_vision_frame_id = frame.frame_id
                 last_vision_result_age = 0.0
                 detection_count += len(result.detections)
+                detection_counts_by_label.update(detection.label for detection in result.detections)
+                vision_latencies_ms.append(float(result.latency_ms))
                 if not result.available:
                     vision_error_count += 1
                 if args.save_vision:
@@ -416,8 +447,21 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             collided = geometry_collision(position, room_config, obstacle_specs)
             distance_to_target = float(np.linalg.norm(np.asarray(controller.target) - position[:2]))
             distance_to_waypoint = float(np.linalg.norm(np.asarray(controller.current_target) - position[:2]))
-            vision_status = last_result.status if last_result is not None else "disabled"
-            nearest_label, nearest_distance = _nearest_detection(last_result) if last_result else (None, None)
+            usable_result = last_result
+            if (
+                last_result is not None
+                and last_vision_result_age is not None
+                and last_vision_result_age > args.vision_max_age
+            ):
+                usable_result = None
+            vision_status = (
+                usable_result.status
+                if usable_result is not None
+                else "stale"
+                if last_result is not None
+                else "disabled"
+            )
+            nearest_label, nearest_distance = _nearest_detection(usable_result) if usable_result else (None, None)
 
             if args.save_sensors:
                 sensor_records.append(
@@ -433,7 +477,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                             "odom_pose": np.asarray(observation["odom_pose"]).tolist(),
                             "robot_pose": np.asarray(observation["robot_pose"]).tolist(),
                         },
-                        "vision": last_result.to_dict() if last_result is not None else None,
+                        "vision": usable_result.to_dict() if usable_result is not None else None,
                         "action": action,
                         "action_step": step,
                         "action_sim_time": step * args.dt,
@@ -455,8 +499,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     "front_min_lidar": front_min_lidar,
                     "vision_frame_id": last_vision_frame_id,
                     "vision_status": vision_status,
-                    "vision_detection_count": len(last_result.detections) if last_result else 0,
-                    "vision_latency_ms": last_result.latency_ms if last_result else None,
+                    "vision_detection_count": len(usable_result.detections) if usable_result else 0,
+                    "vision_latency_ms": usable_result.latency_ms if usable_result else None,
                     "vision_result_age_ms": (
                         last_vision_result_age * 1000.0 if last_vision_result_age is not None else None
                     ),
@@ -469,7 +513,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 print(
                     f"step={observation_step:04d} pos=({position[0]:+.2f},{position[1]:+.2f}) "
                     f"target_dist={distance_to_target:.2f} waypoint={controller.waypoint_idx} "
-                    f"vision={vision_status}:{len(last_result.detections) if last_result else 0} "
+                    f"vision={vision_status}:{len(usable_result.detections) if usable_result else 0} "
                     f"lidar_front_min={front_min_lidar:.2f} cmd=({linear_speed:+.2f},{angular_speed:+.2f})"
                 )
 
@@ -507,10 +551,21 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 if getattr(detector, "model_path", None)
                 else getattr(detector, "reason", None)
             ),
+            "detector_model_sha256": _file_sha256(args.vision_model) if args.perception_mode == "yolo" else None,
             "detector_init_error": detector_init_error,
             "visual_frame_count": visual_frame_count,
             "inference_count": inference_count,
             "detection_count": detection_count,
+            "detection_counts_by_label": dict(detection_counts_by_label),
+            "vision_latency_ms": {
+                "count": len(vision_latencies_ms),
+                "mean": (
+                    sum(vision_latencies_ms) / len(vision_latencies_ms) if vision_latencies_ms else None
+                ),
+                "p50": _percentile(vision_latencies_ms, 50.0),
+                "p95": _percentile(vision_latencies_ms, 95.0),
+                "max": max(vision_latencies_ms) if vision_latencies_ms else None,
+            },
             "vision_error_count": vision_error_count,
             "tracked_object_count": len(tracker.summaries()),
             "front_min_lidar": _front_min_lidar(last_lidar),

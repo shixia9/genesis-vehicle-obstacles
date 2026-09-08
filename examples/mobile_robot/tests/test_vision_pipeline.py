@@ -23,6 +23,7 @@ from examples.mobile_robot.room_navigation_observable import (
     DifferentialDriveController,
     VISION_ROUTE_WAYPOINTS,
 )
+from examples.mobile_robot.vision.evaluate_runtime import _match_frame
 
 
 def make_frame(*, frame_id: int = 0, pose=(0.0, 0.0, 0.22, 0.0)) -> FramePacket:
@@ -115,6 +116,15 @@ def test_color_and_depth_helpers_are_conservative_and_json_safe() -> None:
     assert color == "yellow"
     assert confidence > 0.9
 
+    # Genesis's attached camera can render the same material much darker than
+    # the nominal RGB swatch; color classification must remain illumination
+    # tolerant for the "yellow car" target.
+    dark_yellow = np.zeros((20, 20, 3), dtype=np.uint8)
+    dark_yellow[5:15, 5:15] = (80, 70, 13)
+    color, confidence = dominant_color(dark_yellow, (5, 5, 15, 15))
+    assert color == "yellow"
+    assert confidence > 0.9
+
     result = VisionResult(
         frame_id=0,
         sim_time=0.0,
@@ -162,6 +172,9 @@ def test_calibrated_rgbd_mapping_uses_genesis_intrinsics() -> None:
     assert np.allclose(detection.position_robot, (2.6, 0.0, 0.23))
     assert np.allclose(detection.position_world, (2.6, 0.0, 0.23))
 
+    camera_pose = calibration.camera_pose_from_robot_pose((1.0, 2.0, 0.2, 0.0))
+    assert np.allclose(camera_pose, (1.6, 2.0, 0.43, 0.0))
+
 
 def test_waypoint_controller_keeps_lidar_safety_priority() -> None:
     controller = DifferentialDriveController(CarConfig(), VISION_ROUTE_WAYPOINTS)
@@ -178,3 +191,22 @@ def test_waypoint_controller_keeps_lidar_safety_priority() -> None:
     assert np.isfinite(clear[0]) and np.isfinite(clear[1])
     assert blocked[0] == 0.0
     assert abs(blocked[1]) == CarConfig().max_angular_speed
+
+
+def test_runtime_evaluator_can_match_by_world_position() -> None:
+    prediction = {
+        "label": "car",
+        "bbox_xyxy": [0.0, 0.0, 10.0, 10.0],
+        "position_world": [1.2, 2.0, 0.2],
+    }
+    truth = {
+        "label": "car",
+        "bbox_xyxy": [20.0, 20.0, 30.0, 30.0],
+        "position_world": [1.0, 2.0, 0.2],
+    }
+    matches, unmatched_predictions, unmatched_truth = _match_frame(
+        [prediction], [truth], iou_threshold=0.5, match_mode="position", position_threshold_m=0.5
+    )
+    assert len(matches) == 1
+    assert unmatched_predictions == []
+    assert unmatched_truth == []

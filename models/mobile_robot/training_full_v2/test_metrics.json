@@ -1,0 +1,61 @@
+{
+  "model": "/Users/vamos/Documents/dev/genesis-world/genesis-vehicle-obstacles/models/mobile_robot/training_full_v2/yolo11n_custom/weights/best.pt",
+  "data": "/Users/vamos/Documents/dev/genesis-world/genesis-vehicle-obstacles/datasets/mobile_robot_yolo_full_v2/dataset.yaml",
+  "split": "test",
+  "images": 151,
+  "precision": 0.949893095375523,
+  "recall": 0.8981728056416217,
+  "map50": 0.9427946438736123,
+  "map50_95": 0.7732317744286342,
+  "class_names": [
+    "car",
+    "box_obstacle",
+    "cylinder_obstacle"
+  ],
+  "per_class_precision": [
+    0.9828064169415849,
+    0.9185505409403402,
+    0.9483223282446439
+  ],
+  "per_class_recall": [
+    1.0,
+    0.8056295280359765,
+    0.8888888888888888
+  ],
+  "per_class_map50": [
+    0.995,
+    0.8861563470557279,
+    0.9472275845651091
+  ],
+  "per_class_map50_95": [
+    0.8384305555555557,
+    0.7142040218847262,
+    0.767060745845621
+  ],
+  "per_class_threshold_0_90": {
+    "car": {
+      "precision": 0.9828064169415849,
+      "recall": 1.0,
+      "map50": 0.995,
+      "passed": true
+    },
+    "box_obstacle": {
+      "precision": 0.9185505409403402,
+      "recall": 0.8056295280359765,
+      "map50": 0.8861563470557279,
+      "passed": false
+    },
+    "cylinder_obstacle": {
+      "precision": 0.9483223282446439,
+      "recall": 0.8888888888888888,
+      "map50": 0.9472275845651091,
+      "passed": false
+    }
+  },
+  "speed_ms": {
+    "preprocess": 0.3553468607588122,
+    "inference": 47.405041384183804,
+    "loss": 0.0007615828676926379,
+    "postprocess": 0.21627151549158508
+  }
+}

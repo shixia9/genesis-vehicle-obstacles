@@ -149,6 +149,22 @@ env.close()
 
 `--calibrated-depth` 使用 Genesis 运行时 RGB/Depth 内参和同挂载外参完成 bbox 重投影，输出距离置信度、相机/机器人/世界坐标，并保存 `camera_calibration.json`。程序不会联网下载权重；模型缺失或推理异常时会记录错误并降级，不替代 LiDAR 安全控制。输出默认位于 `out/mobile_robot_vision/`，包括 `vision_results.jsonl`、`tracked_objects.json`、标注图和 `summary.json`。
 
+默认方案的自定义 YOLO 数据和权重位于 `datasets/mobile_robot_yolo_full_v2/` 与 `models/mobile_robot/training_full_v2/`。训练与独立 test：
+
+```bash
+.venv/bin/python -m examples.mobile_robot.vision.train_yolo \
+  --data datasets/mobile_robot_yolo_full_v2/dataset.yaml \
+  --output-dir models/mobile_robot/training_full_v2 \
+  --epochs 20 --imgsz 256 --batch 16 --device cpu --workers 0
+.venv/bin/python -m examples.mobile_robot.vision.evaluate_yolo \
+  --model models/mobile_robot/training_full_v2/yolo11n_custom/weights/best.pt \
+  --data datasets/mobile_robot_yolo_full_v2/dataset.yaml --split test \
+  --imgsz 256 --batch 16 --device cpu \
+  --output-dir models/mobile_robot/training_full_v2
+```
+
+对同一 seed 的 YOLO/ground-truth 运行日志，可用 `vision/evaluate_runtime.py` 做离线位置匹配、颜色/距离误差与延迟 P95 统计；真值不会进入运行时检测器。
+
 ## 四轮 URDF 动力学实验
 
 新增的 [room_navigation_urdf.py](room_navigation_urdf.py) 使用四个连续轮关节：左侧前后轮同步、右侧前后轮同步，车体通过 Genesis 动力学和轮胎接触运动。四轮编码器会生成轮里程计，RGB、深度相机、LiDAR 和 IMU 仍安装在 URDF 的 `base_link` 上。
