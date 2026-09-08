@@ -12,6 +12,12 @@ easy to compare with the kinematic MVP.  Before each physics step, the action
 is converted to left/right wheel-pair angular velocities.  The odometry in
 this experiment is wheel-encoder odometry averaged from four URDF joint positions.
 
+The visual-perception baseline is deliberately model-free: when an RGB frame
+is rendered it is wrapped in ``vision.FramePacket`` with a simulation step and
+timestamp, while ``observation["vision"]`` remains ``None`` until a detector is
+explicitly enabled. This establishes the YOLO integration boundary without
+changing the vehicle policy.
+
 Headless smoke test::
 
     python examples/mobile_robot/room_navigation_urdf.py --steps 300
@@ -64,6 +70,7 @@ try:
         target_for_scenario,
         waypoints_for_scenario,
     )
+    from .vision import FramePacket
 except ImportError:  # Running this file directly from examples/mobile_robot.
     from room_navigation_observable import (
         CarConfig,
@@ -77,6 +84,7 @@ except ImportError:  # Running this file directly from examples/mobile_robot.
         target_for_scenario,
         waypoints_for_scenario,
     )
+    from vision import FramePacket
 
 
 URDF_PATH = Path(__file__).resolve().parent / "assets" / "diff_drive_car.urdf"
@@ -445,8 +453,37 @@ def save_rgb(rgb: np.ndarray, path: Path) -> None:
     Image.fromarray(image).save(path)
 
 
+def attach_vision_baseline(observation: dict[str, Any]) -> FramePacket | None:
+    """Attach the visual contract to one sensor observation.
+
+    A packet exists only when the RGB camera was actually rendered. The
+    observation still contains ``vision=None`` for every step, making the
+    distinction between "no inference" and "model found no objects"
+    explicit. The packet is kept in-memory and is intentionally excluded from
+    JSON sensor logs except for its metadata.
+    """
+
+    rgb = observation.get("rgb")
+    frame = None
+    if rgb is not None:
+        frame = FramePacket(
+            frame_id=int(observation["step"]),
+            sim_time=float(observation["sim_time"]),
+            image=rgb,
+            camera_name="robot_rgb_camera",
+        )
+    observation["vision_frame"] = frame
+    observation["vision"] = None
+    return frame
+
+
 def serialize_observation(observation: dict[str, Any], frame_id: int | None) -> dict[str, Any]:
+    vision_frame = observation.get("vision_frame")
+    vision_result = observation.get("vision")
+    if vision_result is not None and hasattr(vision_result, "to_dict"):
+        vision_result = vision_result.to_dict()
     return {
+        "sensor_frame_id": int(observation["step"]),
         "rgb_frame": frame_id,
         "robot_rgb_frame": frame_id,
         "depth_frame": frame_id,
@@ -458,6 +495,8 @@ def serialize_observation(observation: dict[str, Any], frame_id: int | None) -> 
         "imu_gyro": np.asarray(observation["imu_gyro"]).tolist(),
         "odom_pose": np.asarray(observation["odom_pose"]).tolist(),
         "robot_pose": np.asarray(observation["robot_pose"]).tolist(),
+        "vision_frame": vision_frame.to_metadata() if vision_frame is not None else None,
+        "vision": vision_result,
     }
 
 
@@ -515,6 +554,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             imu=imu,
             odometry=odometry,
         )
+        attach_vision_baseline(observation)
 
         for step in range(args.steps):
             controller_observation = observation
@@ -564,6 +604,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 robot_rgb_camera=robot_rgb_camera,
                 render=capture_frame,
             )
+            vision_frame = attach_vision_baseline(observation)
             last_lidar = np.asarray(observation["lidar"], dtype=np.float32)
             position = np.asarray(observation["robot_pose"][:3], dtype=np.float32)
             yaw = float(observation["robot_pose"][3])
@@ -637,6 +678,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                         "front_min_lidar": front_min_lidar,
                         "robot_rgb_frame": frame_id,
                         "depth_frame": frame_id,
+                        "vision_frame_id": vision_frame.frame_id if vision_frame is not None else None,
+                        "vision_status": "disabled",
+                        "vision_detection_count": 0,
                         "imu_acc_norm": float(np.linalg.norm(observation["imu_acc"])),
                         "imu_gyro_norm": float(np.linalg.norm(observation["imu_gyro"])),
                         "reached": bool(reached),
