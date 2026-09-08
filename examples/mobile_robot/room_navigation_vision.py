@@ -21,6 +21,7 @@ Examples::
     .venv/bin/python examples/mobile_robot/room_navigation_vision.py \
         --scenario vision_route_showcase --perception-mode yolo \
         --vision-model models/mobile_robot/car_obstacle.pt \
+        --calibrated-depth \
         --save-vision
 """
 
@@ -65,6 +66,8 @@ try:
         FramePacket,
         GroundTruthDetector,
         ObjectTracker,
+        build_genesis_rgbd_calibration,
+        enrich_calibrated_depth,
         VisionResult,
         YoloDetector,
         annotate_rgb,
@@ -90,6 +93,8 @@ except ImportError:  # pragma: no cover - direct script execution
         FramePacket,
         GroundTruthDetector,
         ObjectTracker,
+        build_genesis_rgbd_calibration,
+        enrich_calibrated_depth,
         VisionResult,
         YoloDetector,
         annotate_rgb,
@@ -123,7 +128,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--approx-depth",
         action="store_true",
-        help="Sample separate DepthCamera by normalized bbox coordinates and mark it approximate.",
+        help="Deprecated normalized bbox depth sampling; use --calibrated-depth instead.",
+    )
+    parser.add_argument(
+        "--calibrated-depth",
+        action="store_true",
+        help="Fuse YOLO boxes with the Genesis RGB-D pinhole calibration and output coordinates.",
     )
     parser.add_argument("--image-every", type=int, default=25, help="Save/display images every N steps.")
     parser.add_argument("--log-every", type=int, default=10, help="Print telemetry every N steps.")
@@ -235,6 +245,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         scenario=args.scenario,
     )
     scene, car, lidar, depth_camera, imu, overview_camera, robot_rgb_camera, obstacle_specs = build_scene(scene_args)
+    rgbd_calibration = build_genesis_rgbd_calibration(robot_rgb_camera, depth_camera, getattr(car, "body", None))
+    calibration_path = args.output_dir / "camera_calibration.json"
+    calibration_path.write_text(json.dumps(rgbd_calibration.to_dict(), indent=2), encoding="utf-8")
     semantic_specs = semantic_objects_for_scenario(args.scenario)
     detector, detector_init_error = _make_detector(args, semantic_specs)
     tracker = ObjectTracker()
@@ -319,7 +332,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     image=rgb,
                     camera_name="robot_rgb_camera",
                     camera_pose=tuple(float(value) for value in observation["robot_pose"]),
-                    intrinsics=(float(rgb.shape[1]), float(rgb.shape[0]), 90.0),
+                    intrinsics=(
+                        rgbd_calibration.rgb.fx,
+                        rgbd_calibration.rgb.fy,
+                        rgbd_calibration.rgb.cx,
+                        rgbd_calibration.rgb.cy,
+                    ),
                 )
                 visual_frame_count += 1
                 started = time.perf_counter()
@@ -327,7 +345,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     result = detector.detect(frame)
                     if args.perception_mode == "yolo":
                         result = enrich_colors(frame, result)
-                        if args.approx_depth:
+                        if args.calibrated_depth:
+                            result = enrich_calibrated_depth(
+                                result,
+                                observation["depth"],
+                                rgbd_calibration,
+                                robot_pose=observation["robot_pose"],
+                            )
+                        elif args.approx_depth:
                             result = enrich_approximate_depth(
                                 result,
                                 observation["depth"],
@@ -364,7 +389,13 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                         "frame": frame.to_metadata(),
                         "result": result.to_dict(),
                         "perception_mode": args.perception_mode,
-                        "depth_alignment": "normalized_approximation" if args.approx_depth else "not_fused",
+                        "depth_alignment": (
+                            "calibrated_pinhole"
+                            if args.calibrated_depth
+                            else "normalized_approximation"
+                            if args.approx_depth
+                            else "not_fused"
+                        ),
                     }
                 )
             elif last_result is not None:
@@ -489,6 +520,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "vision_log_file": str(vision_log_path) if args.save_vision else None,
             "tracked_objects_file": str(args.output_dir / "tracked_objects.json"),
             "robot_rgb_camera": "attached_forward_view",
+            "camera_calibration_file": str(calibration_path),
+            "depth_alignment": (
+                "calibrated_pinhole"
+                if args.calibrated_depth
+                else "normalized_approximation"
+                if args.approx_depth
+                else "not_fused"
+            ),
         }
         (args.output_dir / "tracked_objects.json").write_text(
             json.dumps(tracker.summaries(), ensure_ascii=False, indent=2),

@@ -1,0 +1,26 @@
+{
+  "model": "/Users/vamos/Documents/dev/genesis-world/genesis-vehicle-obstacles/models/mobile_robot/training_pilot/yolo11n_custom/weights/best.pt",
+  "data": "/Users/vamos/Documents/dev/genesis-world/genesis-vehicle-obstacles/datasets/mobile_robot_yolo_pilot_v2/dataset.yaml",
+  "split": "test",
+  "images": 46,
+  "precision": 0.6721754861415433,
+  "recall": 0.7055512484170315,
+  "map50": 0.731570189070189,
+  "map50_95": 0.4607854350986704,
+  "per_class_map50": [
+    0.995,
+    0.5165909090909091,
+    0.6831196581196581
+  ],
+  "per_class_map50_95": [
+    0.657875,
+    0.34929090909090915,
+    0.3751903962051021
+  ],
+  "speed_ms": {
+    "preprocess": 0.1800045239455674,
+    "inference": 27.823558922492616,
+    "loss": 0.00021919486639292344,
+    "postprocess": 0.3257019789484532
+  }
+}

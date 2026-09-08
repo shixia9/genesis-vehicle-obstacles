@@ -40,8 +40,13 @@ class GroundTruthDetector:
             raise ValueError("camera_pose must contain [x, y, z, yaw]")
         robot_x, robot_y, robot_z, yaw = camera_pose[:4]
         width, height = frame.width, frame.height
-        f = width / (2.0 * math.tan(math.radians(self.fov_degrees) / 2.0))
-        half_fov = math.radians(self.fov_degrees) / 2.0
+        if frame.intrinsics is not None and len(frame.intrinsics) >= 4:
+            fx, fy, cx, cy = (float(value) for value in frame.intrinsics[:4])
+            horizontal_half_fov = math.atan2(cx, fx)
+        else:
+            fx = fy = width / (2.0 * math.tan(math.radians(self.fov_degrees) / 2.0))
+            cx, cy = width / 2.0, height * 0.58
+            horizontal_half_fov = math.radians(self.fov_degrees) / 2.0
         detections: list[Detection] = []
 
         for class_id, obj in enumerate(self.objects):
@@ -50,14 +55,16 @@ class GroundTruthDetector:
             delta_y = object_y - float(robot_y)
             forward = math.cos(float(yaw)) * delta_x + math.sin(float(yaw)) * delta_y
             lateral = -math.sin(float(yaw)) * delta_x + math.cos(float(yaw)) * delta_y
-            if forward <= 0.15 or abs(math.atan2(lateral, forward)) > half_fov:
+            if forward <= 0.15 or abs(math.atan2(lateral, forward)) > horizontal_half_fov:
                 continue
 
             size_x, size_y, size_z = (float(value) for value in obj.size)
-            projected_width = max(4.0, f * max(size_x, size_y) / forward)
-            projected_height = max(4.0, f * size_z / forward)
-            center_x = width / 2.0 + f * lateral / forward
-            center_y = height * 0.58 - f * (object_z - float(robot_z)) / forward
+            projected_width = max(4.0, fx * max(size_x, size_y) / forward)
+            projected_height = max(4.0, fy * size_z / forward)
+            # Genesis' camera image points right along negative robot-lateral
+            # and down along negative robot-up.
+            center_x = cx - fx * lateral / forward
+            center_y = cy - fy * (object_z - float(robot_z)) / forward
             x1 = max(0.0, center_x - projected_width / 2.0)
             y1 = max(0.0, center_y - projected_height / 2.0)
             x2 = min(float(width - 1), center_x + projected_width / 2.0)

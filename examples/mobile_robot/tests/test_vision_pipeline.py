@@ -10,9 +10,13 @@ from examples.mobile_robot.vision import (
     FramePacket,
     GroundTruthDetector,
     ObjectTracker,
+    PinholeIntrinsics,
+    RgbdCalibration,
     VisionResult,
+    enrich_calibrated_depth,
     dominant_color,
     enrich_approximate_depth,
+    sample_aligned_depth,
 )
 from examples.mobile_robot.room_navigation_observable import (
     CarConfig,
@@ -121,6 +125,42 @@ def test_color_and_depth_helpers_are_conservative_and_json_safe() -> None:
     depth = np.full((10, 10), 2.0, dtype=np.float32)
     fused = enrich_approximate_depth(result, depth, rgb_shape=(20, 20))
     assert fused.detections[0].distance_m == 2.0
+
+
+def test_calibrated_rgbd_mapping_uses_genesis_intrinsics() -> None:
+    calibration = RgbdCalibration(
+        rgb=PinholeIntrinsics(256, 192, 96.0, 96.0, 128.0, 96.0),
+        depth=PinholeIntrinsics(128, 96, 64.0, 64.0, 64.0, 48.0),
+        depth_from_rgb=np.eye(4),
+        robot_from_depth=np.array(
+            [[1.0, 0.0, 0.0, 0.6], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.23], [0, 0, 0, 1]],
+            dtype=np.float64,
+        ),
+    )
+    mapped = calibration.project_rgb_pixels_to_depth(np.array([[128.0, 96.0], [32.0, 24.0]]))
+    assert np.allclose(mapped[0], (64.0, 48.0))
+    assert np.allclose(mapped[1], (0.0, 0.0))
+
+    depth = np.full((96, 128), 2.0, dtype=np.float32)
+    distance, spread, count = sample_aligned_depth(depth, (96.0, 72.0, 160.0, 120.0), calibration)
+    assert distance == 2.0
+    assert spread == 0.0
+    assert count > 0
+
+    result = VisionResult(
+        frame_id=1,
+        sim_time=0.02,
+        model_name="test",
+        latency_ms=1.0,
+        detections=(Detection(class_id=0, label="car", confidence=0.9, bbox_xyxy=(96, 72, 160, 120)),),
+    )
+    fused = enrich_calibrated_depth(result, depth, calibration, robot_pose=(0.0, 0.0, 0.0, 0.0))
+    detection = fused.detections[0]
+    assert detection.distance_m == 2.0
+    assert detection.distance_confidence == 1.0
+    assert detection.position_robot is not None
+    assert np.allclose(detection.position_robot, (2.6, 0.0, 0.23))
+    assert np.allclose(detection.position_world, (2.6, 0.0, 0.23))
 
 
 def test_waypoint_controller_keeps_lidar_safety_priority() -> None:

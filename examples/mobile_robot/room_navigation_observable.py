@@ -599,6 +599,9 @@ def build_scene(args: argparse.Namespace):
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(dt=args.dt),
+        vis_options=gs.options.VisOptions(
+            segmentation_level=getattr(args, "segmentation_level", "link"),
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(6.5, -7.0, 5.8),
             camera_lookat=(0.0, 0.0, 0.45),
@@ -610,17 +613,21 @@ def build_scene(args: argparse.Namespace):
     obstacle_specs = obstacle_specs_for_scenario(args.scenario)
     add_room(scene, RoomConfig(), obstacle_specs)
 
-    semantic_specs = semantic_objects_for_scenario(args.scenario)
+    semantic_specs = getattr(args, "semantic_specs_override", None)
+    if semantic_specs is None:
+        semantic_specs = semantic_objects_for_scenario(args.scenario)
+    semantic_specs = tuple(semantic_specs)
     semantic_surfaces = {
         "yellow": gs.surfaces.Emission(color=(0.95, 0.82, 0.05)),
         "red": gs.surfaces.Emission(color=(0.90, 0.08, 0.05)),
         "blue": gs.surfaces.Emission(color=(0.05, 0.25, 0.95)),
         "orange": gs.surfaces.Emission(color=(0.95, 0.35, 0.05)),
     }
+    semantic_entities = []
     for semantic_spec in semantic_specs:
         surface = semantic_surfaces.get(semantic_spec.color, gs.surfaces.Emission(color=(0.7, 0.7, 0.7)))
         if semantic_spec.shape == "cylinder":
-            scene.add_entity(
+            entity = scene.add_entity(
                 gs.morphs.Cylinder(
                     radius=semantic_spec.size[0] / 2.0,
                     height=semantic_spec.size[2],
@@ -630,10 +637,11 @@ def build_scene(args: argparse.Namespace):
                 surface=surface,
             )
         else:
-            scene.add_entity(
+            entity = scene.add_entity(
                 gs.morphs.Box(size=semantic_spec.size, pos=semantic_spec.position, fixed=True),
                 surface=surface,
             )
+        semantic_entities.append((semantic_spec, entity))
 
     target = target_for_scenario(args.scenario)
     scene.add_entity(
@@ -733,7 +741,7 @@ def build_scene(args: argparse.Namespace):
     semantic_collision_specs = tuple(
         ((spec.position[0], spec.position[1]), spec.size) for spec in semantic_specs
     )
-    return (
+    result = (
         scene,
         car,
         lidar,
@@ -743,6 +751,9 @@ def build_scene(args: argparse.Namespace):
         robot_rgb_camera,
         obstacle_specs + semantic_collision_specs,
     )
+    if getattr(args, "return_semantic_registry", False):
+        return (*result, tuple(semantic_entities))
+    return result
 
 
 def save_rgb(rgb: np.ndarray, path: Path) -> None:

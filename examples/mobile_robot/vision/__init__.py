@@ -9,6 +9,13 @@ from .detector import DisabledDetector, VisionDetector
 from .ground_truth import GroundTruthDetector
 from .attributes import dominant_color, enrich_colors
 from .overlay import annotate_rgb
+from .rgbd_calibration import (
+    PinholeIntrinsics,
+    RgbdCalibration,
+    build_genesis_rgbd_calibration,
+    enrich_calibrated_depth,
+    sample_aligned_depth,
+)
 from .rgbd_fusion import enrich_approximate_depth, sample_bbox_depth
 from .tracker import ObjectTracker
 from .types import Detection, FramePacket, VisionResult, normalize_rgb_image
@@ -24,6 +31,11 @@ __all__ = [
     "enrich_colors",
     "enrich_approximate_depth",
     "sample_bbox_depth",
+    "PinholeIntrinsics",
+    "RgbdCalibration",
+    "build_genesis_rgbd_calibration",
+    "enrich_calibrated_depth",
+    "sample_aligned_depth",
     "annotate_rgb",
     "YoloDetector",
     "VisionDetector",

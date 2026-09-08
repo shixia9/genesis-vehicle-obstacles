@@ -143,10 +143,11 @@ env.close()
   --scenario vision_route_showcase \
   --perception-mode yolo \
   --vision-model models/mobile_robot/car_obstacle.pt \
+  --calibrated-depth \
   --save-vision
 ```
 
-程序不会联网下载权重；模型缺失或推理异常时会记录错误并降级，不替代 LiDAR 安全控制。输出默认位于 `out/mobile_robot_vision/`，包括 `vision_results.jsonl`、`tracked_objects.json`、标注图和 `summary.json`。
+`--calibrated-depth` 使用 Genesis 运行时 RGB/Depth 内参和同挂载外参完成 bbox 重投影，输出距离置信度、相机/机器人/世界坐标，并保存 `camera_calibration.json`。程序不会联网下载权重；模型缺失或推理异常时会记录错误并降级，不替代 LiDAR 安全控制。输出默认位于 `out/mobile_robot_vision/`，包括 `vision_results.jsonl`、`tracked_objects.json`、标注图和 `summary.json`。
 
 ## 四轮 URDF 动力学实验
 

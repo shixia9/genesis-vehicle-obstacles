@@ -112,6 +112,9 @@ class Detection:
     color_confidence: float | None = None
     shape: str | None = None
     distance_m: float | None = None
+    distance_confidence: float | None = None
+    depth_valid_pixel_count: int | None = None
+    depth_spread_m: float | None = None
     position_camera: tuple[float, ...] | None = None
     position_robot: tuple[float, ...] | None = None
     position_world: tuple[float, ...] | None = None
@@ -131,6 +134,14 @@ class Detection:
             raise ValueError("color_confidence must be in [0, 1]")
         if self.distance_m is not None and (not math.isfinite(float(self.distance_m)) or float(self.distance_m) < 0.0):
             raise ValueError("distance_m must be a finite non-negative value")
+        if self.distance_confidence is not None and not 0.0 <= float(self.distance_confidence) <= 1.0:
+            raise ValueError("distance_confidence must be in [0, 1]")
+        if self.depth_valid_pixel_count is not None and int(self.depth_valid_pixel_count) < 0:
+            raise ValueError("depth_valid_pixel_count must be non-negative")
+        if self.depth_spread_m is not None and (
+            not math.isfinite(float(self.depth_spread_m)) or float(self.depth_spread_m) < 0.0
+        ):
+            raise ValueError("depth_spread_m must be a finite non-negative value")
 
         object.__setattr__(self, "class_id", int(self.class_id))
         object.__setattr__(self, "confidence", float(self.confidence))
@@ -141,6 +152,17 @@ class Detection:
             None if self.color_confidence is None else float(self.color_confidence),
         )
         object.__setattr__(self, "distance_m", None if self.distance_m is None else float(self.distance_m))
+        object.__setattr__(
+            self,
+            "distance_confidence",
+            None if self.distance_confidence is None else float(self.distance_confidence),
+        )
+        object.__setattr__(
+            self,
+            "depth_valid_pixel_count",
+            None if self.depth_valid_pixel_count is None else int(self.depth_valid_pixel_count),
+        )
+        object.__setattr__(self, "depth_spread_m", None if self.depth_spread_m is None else float(self.depth_spread_m))
         object.__setattr__(self, "position_camera", _optional_vector(self.position_camera))
         object.__setattr__(self, "position_robot", _optional_vector(self.position_robot))
         object.__setattr__(self, "position_world", _optional_vector(self.position_world))
@@ -156,6 +178,9 @@ class Detection:
             "color_confidence": self.color_confidence,
             "shape": self.shape,
             "distance_m": self.distance_m,
+            "distance_confidence": self.distance_confidence,
+            "depth_valid_pixel_count": self.depth_valid_pixel_count,
+            "depth_spread_m": self.depth_spread_m,
             "position_camera": list(self.position_camera) if self.position_camera is not None else None,
             "position_robot": list(self.position_robot) if self.position_robot is not None else None,
             "position_world": list(self.position_world) if self.position_world is not None else None,
