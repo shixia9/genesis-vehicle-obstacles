@@ -690,4 +690,5 @@ P1 建议门槛：
 - [README.md](README.md)：当前示例运行方式；
 - [STRATEGY.md](STRATEGY.md)：现有简易 waypoint/LiDAR 策略；
 - [_docs/YOLO_VISION_INTEGRATION_DESIGN_AND_PLAN.md](_docs/YOLO_VISION_INTEGRATION_DESIGN_AND_PLAN.md)：已有 YOLO 接入设计；
-- [_docs/SIMULATION_ANALYSIS_AND_PLAN.md](_docs/SIMULATION_ANALYSIS_AND_PLAN.md)：仿真闭环分析。
+- [_docs/SIMULATION_ANALYSIS_AND_PLAN.md](_docs/SIMULATION_ANALYSIS_AND_PLAN.md)：仿真闭环分析；
+- [_reports/EXECUTION_REPORT.md](_reports/EXECUTION_REPORT.md)：本次执行、测试和交付报告。

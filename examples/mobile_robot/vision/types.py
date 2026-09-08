@@ -115,6 +115,7 @@ class Detection:
     position_camera: tuple[float, ...] | None = None
     position_robot: tuple[float, ...] | None = None
     position_world: tuple[float, ...] | None = None
+    track_id: str | None = None
 
     def __post_init__(self) -> None:
         bbox = tuple(float(value) for value in self.bbox_xyxy)
@@ -143,6 +144,7 @@ class Detection:
         object.__setattr__(self, "position_camera", _optional_vector(self.position_camera))
         object.__setattr__(self, "position_robot", _optional_vector(self.position_robot))
         object.__setattr__(self, "position_world", _optional_vector(self.position_world))
+        object.__setattr__(self, "track_id", None if self.track_id is None else str(self.track_id))
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -157,6 +159,7 @@ class Detection:
             "position_camera": list(self.position_camera) if self.position_camera is not None else None,
             "position_robot": list(self.position_robot) if self.position_robot is not None else None,
             "position_world": list(self.position_world) if self.position_world is not None else None,
+            "track_id": self.track_id,
         }
 
 

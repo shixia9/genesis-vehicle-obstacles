@@ -6,6 +6,7 @@ import logging
 import math
 import numbers
 import os
+import platform
 import random
 import sys
 from collections import OrderedDict
@@ -202,7 +203,18 @@ def get_device(backend: gs.constants.backend, device_idx: Optional[int] = None):
         device = torch.device("mps")
     else:
         cpu_info = cpuinfo.get_cpu_info()
-        device_name = next(filter(None, map(cpu_info.get, ("brand_raw", "hardware_raw", "vendor_id_raw"))))
+        device_name = next(
+            filter(
+                None,
+                (
+                    cpu_info.get("brand_raw"),
+                    cpu_info.get("hardware_raw"),
+                    cpu_info.get("vendor_id_raw"),
+                    platform.processor(),
+                    "unknown-cpu",
+                ),
+            )
+        )
         total_mem = psutil.virtual_memory().total / 1024**3
         assert not device_idx, "Specifying device index other than 0 is not support for Torch CPU device."
         device = torch.device("cpu")

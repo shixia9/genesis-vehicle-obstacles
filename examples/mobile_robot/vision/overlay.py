@@ -22,6 +22,8 @@ _PALETTE = (
 
 def _label_for_detection(detection: Detection) -> str:
     label = f"{detection.label} {detection.confidence:.2f}"
+    if detection.track_id:
+        label += f" #{detection.track_id}"
     if detection.color:
         label += f" {detection.color}"
     if detection.shape:
@@ -49,9 +51,16 @@ def annotate_rgb(image: np.ndarray, result: VisionResult) -> np.ndarray:
         color = _PALETTE[detection.class_id % len(_PALETTE)]
         draw.rectangle(box, outline=color, width=3)
         label = _label_for_detection(detection)
-        text_box = draw.textbbox((box[0], box[1]), label)
+        text_bbox = draw.textbbox((0, 0), label)
+        text_width = text_bbox[2] - text_bbox[0]
+        text_height = text_bbox[3] - text_bbox[1]
+        text_x = min(max(0, box[0]), max(0, width - text_width))
+        text_y = box[1] - text_height - 2
+        if text_y < 0:
+            text_y = min(height - text_height, box[3] + 2)
+        text_box = (text_x, text_y, text_x + text_width, text_y + text_height)
         draw.rectangle(text_box, fill=color)
-        draw.text((box[0], box[1]), label, fill=(0, 0, 0))
+        draw.text((text_x, text_y), label, fill=(0, 0, 0))
     return np.asarray(canvas, dtype=np.uint8)
 
 

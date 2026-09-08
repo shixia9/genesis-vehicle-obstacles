@@ -65,6 +65,23 @@ class CarConfig:
     max_wheel_speed: float = 8.0
 
 
+@dataclass(frozen=True)
+class SemanticObjectSpec:
+    """Static semantic object authored into a showcase scene.
+
+    The scene uses this metadata only for deterministic ground-truth evaluation
+    and synthetic-label generation. Runtime YOLO inference never reads it.
+    ``size`` is an axis-aligned footprint/height approximation in meters.
+    """
+
+    object_id: str
+    category: str
+    color: str
+    shape: str
+    position: tuple[float, float, float]
+    size: tuple[float, float, float]
+
+
 INITIAL_POSITION = (-2.8, -1.8, 0.22)
 DEFAULT_WAYPOINTS = (
     (-2.8, -2.1),
@@ -72,6 +89,14 @@ DEFAULT_WAYPOINTS = (
     (2.8, 1.7),
 )
 SHOWCASE_WAYPOINTS = (
+    INITIAL_POSITION[:2],
+    (-2.8, 1.4),
+    (-0.2, 1.4),
+    (-0.2, -0.8),
+    (2.8, -0.8),
+    (2.8, 1.7),
+)
+VISION_ROUTE_WAYPOINTS = (
     INITIAL_POSITION[:2],
     (-2.8, 1.4),
     (-0.2, 1.4),
@@ -121,6 +146,39 @@ SCENARIO_OBSTACLE_SPECS: dict[str, tuple[tuple[tuple[float, float], tuple[float,
     ),
     # Keep the single central box as a focused local-obstacle regression case.
     "room_center_obstacle": (((-2.8, 0.2), (0.8, 0.8, 0.7)),),
+    "vision_route_showcase": (
+        ((-1.0, -0.25), (0.7, 0.7, 0.7)),
+        ((1.3, 0.75), (0.7, 0.7, 0.8)),
+    ),
+}
+
+SCENARIO_SEMANTIC_OBJECTS: dict[str, tuple[SemanticObjectSpec, ...]] = {
+    "vision_route_showcase": (
+        SemanticObjectSpec(
+            object_id="yellow_car_01",
+            category="car",
+            color="yellow",
+            shape="vehicle",
+            position=(-1.8, 0.35, 0.22),
+            size=(0.80, 0.52, 0.38),
+        ),
+        SemanticObjectSpec(
+            object_id="red_box_01",
+            category="box_obstacle",
+            color="red",
+            shape="box",
+            position=(0.4, 2.1, 0.35),
+            size=(0.60, 0.60, 0.70),
+        ),
+        SemanticObjectSpec(
+            object_id="blue_cylinder_01",
+            category="cylinder_obstacle",
+            color="blue",
+            shape="cylinder",
+            position=(1.2, -1.45, 0.35),
+            size=(0.60, 0.60, 0.70),
+        ),
+    ),
 }
 
 SCENARIO_WAYPOINTS = {
@@ -128,6 +186,7 @@ SCENARIO_WAYPOINTS = {
     "room_basic": DEFAULT_WAYPOINTS,
     "room_obstacle": SHOWCASE_WAYPOINTS,
     "room_center_obstacle": CENTER_OBSTACLE_WAYPOINTS,
+    "vision_route_showcase": VISION_ROUTE_WAYPOINTS,
 }
 
 
@@ -147,6 +206,12 @@ def obstacle_specs_for_scenario(scenario: str):
         return SCENARIO_OBSTACLE_SPECS[scenario]
     except KeyError as exc:
         raise ValueError(f"Unknown scenario: {scenario}") from exc
+
+
+def semantic_objects_for_scenario(scenario: str) -> tuple[SemanticObjectSpec, ...]:
+    """Return authored semantic objects for a scenario, if any."""
+
+    return SCENARIO_SEMANTIC_OBJECTS.get(scenario, ())
 
 
 def parse_args() -> argparse.Namespace:
@@ -545,6 +610,31 @@ def build_scene(args: argparse.Namespace):
     obstacle_specs = obstacle_specs_for_scenario(args.scenario)
     add_room(scene, RoomConfig(), obstacle_specs)
 
+    semantic_specs = semantic_objects_for_scenario(args.scenario)
+    semantic_surfaces = {
+        "yellow": gs.surfaces.Emission(color=(0.95, 0.82, 0.05)),
+        "red": gs.surfaces.Emission(color=(0.90, 0.08, 0.05)),
+        "blue": gs.surfaces.Emission(color=(0.05, 0.25, 0.95)),
+        "orange": gs.surfaces.Emission(color=(0.95, 0.35, 0.05)),
+    }
+    for semantic_spec in semantic_specs:
+        surface = semantic_surfaces.get(semantic_spec.color, gs.surfaces.Emission(color=(0.7, 0.7, 0.7)))
+        if semantic_spec.shape == "cylinder":
+            scene.add_entity(
+                gs.morphs.Cylinder(
+                    radius=semantic_spec.size[0] / 2.0,
+                    height=semantic_spec.size[2],
+                    pos=semantic_spec.position,
+                    fixed=True,
+                ),
+                surface=surface,
+            )
+        else:
+            scene.add_entity(
+                gs.morphs.Box(size=semantic_spec.size, pos=semantic_spec.position, fixed=True),
+                surface=surface,
+            )
+
     target = target_for_scenario(args.scenario)
     scene.add_entity(
         gs.morphs.Cylinder(height=0.025, radius=0.22, pos=(*target, 0.013), fixed=True),
@@ -640,7 +730,19 @@ def build_scene(args: argparse.Namespace):
     )
     robot_rgb_camera.attach(body.base_link, robot_camera_offset)
     robot_rgb_camera.move_to_attach()
-    return scene, car, lidar, depth_camera, imu, rgb_camera, robot_rgb_camera, obstacle_specs
+    semantic_collision_specs = tuple(
+        ((spec.position[0], spec.position[1]), spec.size) for spec in semantic_specs
+    )
+    return (
+        scene,
+        car,
+        lidar,
+        depth_camera,
+        imu,
+        rgb_camera,
+        robot_rgb_camera,
+        obstacle_specs + semantic_collision_specs,
+    )
 
 
 def save_rgb(rgb: np.ndarray, path: Path) -> None:

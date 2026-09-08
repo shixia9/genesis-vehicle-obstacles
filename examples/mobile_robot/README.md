@@ -123,6 +123,31 @@ env.close()
 
 `sensor_observations.jsonl` 中每条记录的 `observation` 是动作执行后的下一时刻观测，`action_step` 标明产生该观测的动作所在步；这样图像、传感器、位姿和动作不会被误认为来自同一物理时刻。CLI 运行时可用 `--save-sensors` 保存这些记录。
 
+## 视觉控制展示：沿途识别物体
+
+[room_navigation_vision.py](room_navigation_vision.py) 是当前视觉/控制主线入口：小车按简易 waypoint + LiDAR 策略驶向既定目的地，同时在车载 RGB 视角中持续产生检测结果。该入口不依赖 LLM；LLM 任务另见 [TASK_LLM.md](TASK_LLM.md)。完整需求、TODO 和验收标准见 [TASK.md](TASK.md)。
+
+使用确定性的 Genesis 真值感知后端联调运行时、叠加和日志：
+
+```bash
+.venv/bin/python examples/mobile_robot/room_navigation_vision.py \
+  --scenario vision_route_showcase \
+  --perception-mode ground_truth \
+  --save-images --save-sensors --save-vision
+```
+
+`ground_truth` 仅用于开发联调，输出会明确标注 `perception_mode=ground_truth`。使用真实本地 YOLO 权重时：
+
+```bash
+.venv/bin/python examples/mobile_robot/room_navigation_vision.py \
+  --scenario vision_route_showcase \
+  --perception-mode yolo \
+  --vision-model models/mobile_robot/car_obstacle.pt \
+  --save-vision
+```
+
+程序不会联网下载权重；模型缺失或推理异常时会记录错误并降级，不替代 LiDAR 安全控制。输出默认位于 `out/mobile_robot_vision/`，包括 `vision_results.jsonl`、`tracked_objects.json`、标注图和 `summary.json`。
+
 ## 四轮 URDF 动力学实验
 
 新增的 [room_navigation_urdf.py](room_navigation_urdf.py) 使用四个连续轮关节：左侧前后轮同步、右侧前后轮同步，车体通过 Genesis 动力学和轮胎接触运动。四轮编码器会生成轮里程计，RGB、深度相机、LiDAR 和 IMU 仍安装在 URDF 的 `base_link` 上。
