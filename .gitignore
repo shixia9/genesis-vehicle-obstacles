@@ -167,5 +167,7 @@ outputs/
 # Local prompt
 /examples/mobile_robot/_*/
 # Keep execution reports deliverable while continuing to ignore other local `_` directories.
-!/examples/mobile_robot/_reports/
-!/examples/mobile_robot/_reports/**
+/examples/mobile_robot/_reports/
+
+# YOLO training datasets
+/datasets/
