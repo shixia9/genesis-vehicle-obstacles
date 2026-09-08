@@ -460,7 +460,8 @@ examples/mobile_robot/
 - [X] `[P0]` 将算法采帧与 GUI/图片保存解耦。
 - [X] `[P0]` 在视觉周期创建 `FramePacket` 并调用 `VisionDetector.detect()`。
 - [X] `[P0]` 将 `VisionResult` 写入当前观测和独立 JSONL。
-- [X] `[P0]` 第一视角叠加检测框、类别、置信度、帧号和延迟。
+- [X] `[P0]` 生成第一视角标注图，叠加检测框、类别、置信度、颜色、距离和跟踪 ID。
+- [X] `[P0]` 增加独立 `--annotated-view` OpenCV 实时窗口；Genesis `--robot-view` 保持显示原始车载 RGB，避免误以为标注已回写 Genesis 纹理。
 - [X] `[P0]` 保留原图，标注图输出到独立目录。
 - [X] `[P0]` 记录每帧检测数量、类别、bbox、推理耗时和结果年龄。
 - [X] `[P0]` 模型不可用或推理异常时降级为 `vision_status=unavailable/error`，控制循环继续安全运行。

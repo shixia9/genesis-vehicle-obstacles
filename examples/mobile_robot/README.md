@@ -142,12 +142,14 @@ env.close()
 .venv/bin/python examples/mobile_robot/room_navigation_vision.py \
   --scenario vision_route_showcase \
   --perception-mode yolo \
-  --vision-model models/mobile_robot/car_obstacle.pt \
+  --vision-model models/mobile_robot/training_full_v2/yolo11n_custom/weights/best.pt \
   --calibrated-depth \
-  --save-vision
+  --save-vision --annotated-view
 ```
 
 `--calibrated-depth` 使用 Genesis 运行时 RGB/Depth 内参和同挂载外参完成 bbox 重投影，输出距离置信度、相机/机器人/世界坐标，并保存 `camera_calibration.json`。程序不会联网下载权重；模型缺失或推理异常时会记录错误并降级，不替代 LiDAR 安全控制。输出默认位于 `out/mobile_robot_vision/`，包括 `vision_results.jsonl`、`tracked_objects.json`、标注图和 `summary.json`。
+
+`--robot-view` 是 Genesis 原始车载 RGB 窗口，不包含 YOLO 框；`--annotated-view` 会另外打开一个 OpenCV 窗口，显示当前推理帧及类别、置信度、颜色、跟踪 ID 和距离标注。两个窗口可以同时开启。标注窗口只在新推理结果对应的帧上绘制框，不复用过期框，避免小车运动时框与目标错位。`--vision-every 25` 表示每 25 个仿真步刷新一次标注（默认 `dt=0.02` 时约 0.5 秒）；需要更连续的视觉刷新可降低为 `--vision-every 1`，代价是 CPU 推理开销增加。按 `q` 或 `Esc` 可关闭标注窗口，车辆控制仍会继续。
 
 默认方案的自定义 YOLO 数据和权重位于 `datasets/mobile_robot_yolo_full_v2/` 与 `models/mobile_robot/training_full_v2/`。训练与独立 test：
 

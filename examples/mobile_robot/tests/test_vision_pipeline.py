@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import numpy as np
 
 from examples.mobile_robot.vision import (
+    AnnotatedRgbView,
     Detection,
     DisabledDetector,
     FramePacket,
@@ -34,6 +35,63 @@ def make_frame(*, frame_id: int = 0, pose=(0.0, 0.0, 0.22, 0.0)) -> FramePacket:
         camera_pose=pose,
         intrinsics=(128.0, 96.0, 90.0),
     )
+
+
+class _FakeCv2:
+    WINDOW_NORMAL = 0
+    COLOR_RGB2BGR = 1
+    WND_PROP_VISIBLE = 2
+    error = RuntimeError
+
+    def __init__(self) -> None:
+        self.named_windows: list[str] = []
+        self.frames: list[np.ndarray] = []
+        self.destroyed: list[str] = []
+
+    def namedWindow(self, name: str, flags: int) -> None:
+        self.named_windows.append(name)
+
+    def cvtColor(self, image: np.ndarray, code: int) -> np.ndarray:
+        assert code == self.COLOR_RGB2BGR
+        return image[..., ::-1].copy()
+
+    def imshow(self, name: str, image: np.ndarray) -> None:
+        assert name in self.named_windows
+        self.frames.append(image)
+
+    def waitKey(self, delay: int) -> int:
+        assert delay == 1
+        return -1
+
+    def getWindowProperty(self, name: str, prop: int) -> float:
+        assert name in self.named_windows
+        assert prop == self.WND_PROP_VISIBLE
+        return 1.0
+
+    def destroyWindow(self, name: str) -> None:
+        self.destroyed.append(name)
+
+
+def test_annotated_view_renders_rgb_overlay_without_reusing_gui_texture() -> None:
+    view = AnnotatedRgbView("test annotated view")
+    fake_cv2 = _FakeCv2()
+    view._cv2 = fake_cv2
+    image = np.zeros((20, 30, 3), dtype=np.uint8)
+    image[..., 0] = 255
+    result = VisionResult(
+        frame_id=1,
+        sim_time=0.02,
+        model_name="test",
+        latency_ms=1.0,
+        detections=(Detection(class_id=0, label="car", confidence=0.9, bbox_xyxy=(2, 2, 12, 12)),),
+    )
+
+    assert view.show(image, result) is True
+    assert fake_cv2.named_windows == ["test annotated view"]
+    assert fake_cv2.frames[0].shape == image.shape
+    assert tuple(fake_cv2.frames[0][0, 0]) == (0, 0, 255)
+    view.close()
+    assert fake_cv2.destroyed == ["test annotated view"]
 
 
 def test_frame_and_disabled_detector_are_explicit() -> None:

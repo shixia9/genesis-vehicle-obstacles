@@ -22,7 +22,7 @@ Examples::
         --scenario vision_route_showcase --perception-mode yolo \
         --vision-model models/mobile_robot/car_obstacle.pt \
         --calibrated-depth \
-        --save-vision
+        --save-vision --annotated-view
 """
 
 from __future__ import annotations
@@ -70,6 +70,7 @@ try:
         ObjectTracker,
         build_genesis_rgbd_calibration,
         enrich_calibrated_depth,
+        AnnotatedRgbView,
         VisionResult,
         YoloDetector,
         annotate_rgb,
@@ -97,6 +98,7 @@ except ImportError:  # pragma: no cover - direct script execution
         ObjectTracker,
         build_genesis_rgbd_calibration,
         enrich_calibrated_depth,
+        AnnotatedRgbView,
         VisionResult,
         YoloDetector,
         annotate_rgb,
@@ -112,6 +114,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gpu", action="store_true", help="Use the Genesis GPU backend.")
     parser.add_argument("--vis", action="store_true", help="Open the Genesis overview viewer.")
     parser.add_argument("--robot-view", action="store_true", help="Show the attached robot RGB camera.")
+    parser.add_argument(
+        "--annotated-view",
+        action="store_true",
+        help="Open a separate OpenCV window with per-frame RGB detection overlays.",
+    )
     parser.add_argument("--save-images", action="store_true", help="Save overview, robot RGB and depth frames.")
     parser.add_argument("--save-sensors", action="store_true", help="Save synchronized sensor/action JSONL.")
     parser.add_argument("--save-vision", action="store_true", help="Save annotated RGB and vision JSONL.")
@@ -278,6 +285,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     semantic_specs = semantic_objects_for_scenario(args.scenario)
     detector, detector_init_error = _make_detector(args, semantic_specs)
     tracker = ObjectTracker()
+    annotated_view = AnnotatedRgbView() if args.annotated_view else None
     detector_records: list[dict[str, Any]] = []
     sensor_records: list[dict[str, Any]] = []
     telemetry: list[dict[str, Any]] = []
@@ -320,7 +328,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             odometry=odometry,
             overview_camera=overview_camera,
             robot_rgb_camera=robot_rgb_camera,
-            render=args.perception_mode != "disabled" or args.vis or args.robot_view,
+            render=args.perception_mode != "disabled" or args.vis or args.robot_view or args.annotated_view,
         )
 
         for step in range(args.steps):
@@ -336,7 +344,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             vision_due = args.perception_mode != "disabled" and observation_step % args.vision_every == 0
             image_due = observation_step % args.image_every == 0
             capture_frame = vision_due or (
-                image_due and (args.save_images or args.save_sensors or args.vis or args.robot_view)
+                image_due
+                and (
+                    args.save_images
+                    or args.save_sensors
+                    or args.vis
+                    or args.robot_view
+                    or args.annotated_view
+                )
             )
             observation = read_sensor_observation(
                 step=observation_step,
@@ -431,6 +446,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 )
             elif last_result is not None:
                 last_vision_result_age = float(observation["sim_time"]) - last_result.sim_time
+
+            if annotated_view is not None and capture_frame and observation.get("rgb") is not None:
+                # Only draw a result on the frame it was inferred from.  Reusing
+                # an older result would make boxes visibly lag behind the moving
+                # camera; the next vision tick refreshes them with a new result.
+                annotated_view.show(observation["rgb"], result)
 
             if capture_frame and args.save_images:
                 frame_id = observation_step
@@ -575,6 +596,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "vision_log_file": str(vision_log_path) if args.save_vision else None,
             "tracked_objects_file": str(args.output_dir / "tracked_objects.json"),
             "robot_rgb_camera": "attached_forward_view",
+            "annotated_view": bool(args.annotated_view),
             "camera_calibration_file": str(calibration_path),
             "depth_alignment": (
                 "calibrated_pinhole"
@@ -594,6 +616,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         )
         return summary
     finally:
+        if annotated_view is not None:
+            annotated_view.close()
         gs.destroy()
 
 

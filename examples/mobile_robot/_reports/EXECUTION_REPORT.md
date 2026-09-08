@@ -149,7 +149,7 @@ room_navigation_vision.py
 | -------------------- | --------------------------------------------------------------------------------------------------- | -------------------------- |
 | Python 编译检查      | `.venv/bin/python -m compileall -q examples/mobile_robot genesis/utils/misc.py`                   | 通过                       |
 | 模块导入和数据契约   | `FramePacket/Detection/VisionResult/ObjectTracker` 直接调用                                       | 通过                       |
-| 视觉单元测试         | `.venv/bin/python -m pytest -q -o addopts='' examples/mobile_robot/tests/test_vision_pipeline.py` | 7 passed                   |
+| 视觉单元测试         | `.venv/bin/python -m pytest -q -o addopts='' examples/mobile_robot/tests/test_vision_pipeline.py` | 8 passed                   |
 | GroundTruth 前向投影 | 前方物体保留、后方物体过滤                                                                          | 通过                       |
 | 跟踪 ID              | 相邻帧同一世界位置保持`track-001`                                                                 | 通过                       |
 | 颜色辅助             | 黄色 ROI 置信度判断                                                                                 | 通过                       |
@@ -296,7 +296,7 @@ No OpenGL renderer is available on this machine.
 - RGB bbox 通过两套 pinhole 内参投影到 Depth 像素，再用有效深度中位数、MAD、有效像素数计算距离置信度；同时输出相机、机器人和世界坐标；
 - 每次运行保存 `camera_calibration.json`，视觉 JSONL 的 `depth_alignment` 在启用 `--calibrated-depth` 时标记为 `calibrated_pinhole`。原 `--approx-depth` 保留为兼容性降级路径。
 
-初始相机原点口径的回归曾记录 35 个检测；修正相机安装外参后，校正 ground-truth 参考回归为 1126 步到达、0 碰撞、0 视觉异常、22 个几何投影检测（`car` 4、`box_obstacle` 10、`cylinder_obstacle` 8）。纯 Python 视觉测试更新为 `7 passed`。
+初始相机原点口径的回归曾记录 35 个检测；修正相机安装外参后，校正 ground-truth 参考回归为 1126 步到达、0 碰撞、0 视觉异常、22 个几何投影检测（`car` 4、`box_obstacle` 10、`cylinder_obstacle` 8）。纯 Python 视觉测试更新为 `8 passed`。
 
 回归命令：
 
@@ -374,9 +374,26 @@ No OpenGL renderer is available on this machine.
   --output-dir out/mobile_robot_yolo_full_v2_gui
 ```
 
-Viewer 和车载 RGB 窗口均成功启动；1126 步到达、0 碰撞、45/45 推理、26 个检测、0 视觉异常。标注图和 `summary.json` 位于 `out/mobile_robot_yolo_full_v2_gui/`，证明真实 YOLO 的可视化链路已跑通；GUI 运行的 CPU 延迟受窗口负载影响（P50/P95/max=`28.54/71.13/1190.21 ms`），性能门槛仍以 headless 回归为准。
+Viewer 和车载 RGB 窗口均成功启动；1126 步到达、0 碰撞、45/45 推理、26 个检测、0 视觉异常。标注图和 `summary.json` 位于 `out/mobile_robot_yolo_full_v2_gui/`，证明真实 YOLO 推理与标注图片链路已跑通；该次运行的 Genesis 车载窗口仍显示原始 RGB，独立实时标注窗口在 5.9 节补齐。GUI 运行的 CPU 延迟受窗口负载影响（P50/P95/max=`28.54/71.13/1190.21 ms`），性能门槛仍以 headless 回归为准。
 
 示例标注帧：[frame_00025.png](../../../out/mobile_robot_yolo_full_v2_gui/rgb_robot_annotated/frame_00025.png)。
+
+### 5.9 独立实时标注窗口回归
+
+针对“Genesis 车载窗口始终无框”的问题，新增 `--annotated-view`。该选项使用独立 OpenCV 窗口显示当前 YOLO 推理帧的 `annotate_rgb(...)` 结果；`--robot-view` 仍保留 Genesis 原始 RGB 窗口，不修改 Genesis 相机纹理。窗口只在新推理结果对应的帧上绘制框，避免复用旧 bbox 导致小车移动后框错位；按 `q`/`Esc` 关闭窗口不会停止控制循环。
+
+宿主图形环境回归命令：
+
+```bash
+.venv/bin/python examples/mobile_robot/room_navigation_vision.py \
+  --steps 1200 --scenario vision_route_showcase --perception-mode yolo \
+  --vision-model models/mobile_robot/training_full_v2/yolo11n_custom/weights/best.pt \
+  --vision-device cpu --vision-conf 0.5 --vision-imgsz 256 --vision-every 25 \
+  --calibrated-depth --vis --robot-view --annotated-view --save-vision --log-every 200 \
+  --output-dir out/mobile_robot_yolo_annotated_view
+```
+
+执行结果：1126 步到达、0 碰撞、45/45 推理、26 个检测、0 视觉异常；`summary.json` 明确记录 `annotated_view=true`。示例标注帧：[frame_00025.png](../../../out/mobile_robot_yolo_annotated_view/rgb_robot_annotated/frame_00025.png)。该回归确认实时标注窗口和车载相机使用的是同一帧 RGB/YOLO 结果，标注框会随每个视觉周期更新。
 
 ## 6. TODO 执行状态
 
@@ -398,7 +415,7 @@ Viewer 和车载 RGB 窗口均成功启动；1126 步到达、0 碰撞、45/45 �
 4. 当前 P0 视觉结果不直接改变导航动作，只保证 LiDAR 安全层；
 5. 受限沙箱没有 OpenGL context；宿主环境已经完成 ground-truth 回归，后续仍需在团队标准机器固定测试；
 6. URDF 四轮动力学仍应在运动学视觉闭环通过后单独校准；
-7. `pytest-xdist/pytest-timeout/ruff` 尚未齐备，正式交付前应补齐开发依赖并执行项目标准测试命令；当前纯 Python 视觉回归为 7 passed。
+7. `pytest-xdist/pytest-timeout/ruff` 尚未齐备，正式交付前应补齐开发依赖并执行项目标准测试命令；当前纯 Python 视觉回归为 8 passed。
 
 ## 8. 下一步交付顺序
 
@@ -423,4 +440,5 @@ Viewer 和车载 RGB 窗口均成功启动；1126 步到达、0 碰撞、45/45 �
 - [X] 真实 YOLO 权重训练、独立 test 和闭环识别指标（当前 box/cylinder 未达最终门槛）；
 - [X] Genesis RGB-D 标定和世界坐标融合实现/回归；[runtime_metrics.json](../../../out/mobile_robot_yolo_full_v2/runtime_metrics.json) 已记录真实 YOLO 误差；
 - [X] 视觉单元 pytest 报告（使用 `-o addopts=''`）；
+- [X] 独立 `--annotated-view` 实时标注窗口及宿主 GUI 回归；
 - [ ] 项目默认 pytest + ruff 标准测试报告。

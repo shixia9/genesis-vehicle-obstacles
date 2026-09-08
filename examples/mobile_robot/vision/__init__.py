@@ -8,7 +8,7 @@ camera can therefore all produce the same :class:`FramePacket`.
 from .detector import DisabledDetector, VisionDetector
 from .ground_truth import GroundTruthDetector
 from .attributes import dominant_color, enrich_colors
-from .overlay import annotate_rgb
+from .overlay import AnnotatedRgbView, annotate_rgb
 from .rgbd_calibration import (
     PinholeIntrinsics,
     RgbdCalibration,
@@ -37,6 +37,7 @@ __all__ = [
     "enrich_calibrated_depth",
     "sample_aligned_depth",
     "annotate_rgb",
+    "AnnotatedRgbView",
     "YoloDetector",
     "VisionDetector",
     "VisionResult",
