@@ -152,6 +152,7 @@ ARRIVED / TARGET_NOT_FOUND / AMBIGUOUS_TARGET / FAILED
 - [X] V7-05 使用 Genesis segmentation 真值只做评测、自动构造表达和可选轻量适配训练，禁止运行时读取。
 - [ ] V7-06 若 zero-shot 不足，只微调 prompt/adapter 或领域特征，并保留完全未见类别作为 OOD test；不退回无限扩展闭集类别。
 - [ ] V7-07 至少运行 10 个固定 seed 和多目标/目标缺失/遮挡场景。
+- [X] V7-08 已增加失败诊断工具，按漏检、视野外误报、缺失目标误报、歧义漏检和资产变体输出高置信度样本。
 
 ## 4. LLM TODO
 

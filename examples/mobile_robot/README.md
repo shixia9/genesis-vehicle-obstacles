@@ -237,6 +237,16 @@ env.close()
 需要检查候选框内的弱颜色/形状证据时可额外加 `--roi-rerank`；它只改变已接受候选的排序，
 不修改模型置信度，也不会替代多帧确认。
 
+对已保存的评测结果可生成高置信度失败样本清单：
+
+```bash
+.venv/bin/python examples/mobile_robot/vision/analyze_open_vocab_failures.py \
+  --dataset datasets/mobile_robot_open_vocab_ood \
+  --results out/mobile_robot_open_vocab_dev_prompt_ensemble_v2/ood_results.jsonl \
+  --output-dir out/mobile_robot_open_vocab_dev_prompt_ensemble_v2/failures \
+  --min-confidence 0.05 --top-k 10
+```
+
 该数据集保存 Genesis 实例 mask、深度和 prompt 真值，用于计算 Recall、Top-1、
 缺失目标误报率、歧义检出率及 RGB-D 误差；真值只在推理后参与评分，不会传入 YOLO-World。
 当前结果见 [_reports/OPEN_VOCABULARY_EXECUTION_REPORT.md](_reports/OPEN_VOCABULARY_EXECUTION_REPORT.md)。

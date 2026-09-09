@@ -264,10 +264,43 @@ cylinder_obstacle 0.918
 说明当前主要瓶颈是 YOLO-World 对 `yellow car`/`purple sculpture` 的候选召回，而不是候选排序。
 该层先保留为后续多帧确认和 mask/ROI 验证的接口，暂不作为导航准入依据。
 
+### 6.5 失败样本诊断
+
+新增 [analyze_open_vocab_failures.py](../vision/analyze_open_vocab_failures.py)，对已保存的 JSONL
+结果按可见目标漏检、视野外误报、缺失目标误报和歧义漏检分类，并输出高置信度样本、prompt 和
+资产变体。`dev` ensemble 诊断结果：[failure_analysis.json](../../../out/mobile_robot_open_vocab_dev_prompt_ensemble_v2/failures/failure_analysis.json)。
+
+`min_confidence=0.05` 时共发现 116 个失败事件：
+
+| 类型 | 数量 | 主要线索 |
+| --- | ---: | --- |
+| 可见目标漏检 | 98 | `purple sculpture` 45、`yellow car` 11，另有小/截断平台漏检 |
+| 缺失目标误报 | 13 | `red traffic cone` 11，存在较高置信度诱饵框 |
+| 视野外误报 | 3 | 均为 `orange platform` |
+| 歧义漏检 | 2 | 两个绿色柱子同时可见时只保留一个候选 |
+
+这说明下一轮应优先处理“模型未产生正确候选”和“同 prompt 多实例关联”，而不是继续调低
+决策阈值；低阈值实验已经证明会显著放大视野外误报。
+
+### 6.6 输入分辨率实验
+
+在冻结 prompt ensemble 不变的前提下，仅将 `imgsz` 从 640 提高到 1280，在 `dev` 集复测：
+
+| 指标 | `imgsz=640` | `imgsz=1280` | 结论 |
+| --- | ---: | ---: | --- |
+| Recall@0.5 | 22.2% | 23.0% | 无实质改善 |
+| `yellow car` Recall | 0% | 0% | 未解决 |
+| `purple sculpture` Recall | 0% | 4.4% | 仍不可用 |
+| 视野外误报率 | 0.72% | 0.96% | 变差 |
+| CPU P50 延迟 | 105.6 ms | 350.4 ms | 约 3.3 倍 |
+
+因此不采用 1280 作为当前实时方案；失败主要不是输入缩放造成的，下一轮应转向渲染域/语义特征
+适配和多实例关联，而不是继续堆高推理分辨率。
+
 ## 7. 下一步准入顺序
 
 1. 保持当前 OOD test 不变，禁止用 test 结果反向调阈值；下一轮仍只在 `dev` split 做 prompt 模板、图像预处理和阈值实验；
-2. 已完成 prompt ensemble 的首轮实现和冻结复测，但 `yellow car`/`purple sculpture` 仍无召回；继续分析失败样本、诱饵误报和多目标歧义；
+2. 已完成 prompt ensemble 和失败样本诊断，但 `yellow car`/`purple sculpture` 仍无可靠召回；下一轮只在 `dev` 做渲染域预处理/提示策略实验，并用诊断清单复核诱饵误报和多目标歧义；
 3. ROI 颜色/形状证据验证层已实现为可选排序旁路，但首轮没有改善 Recall；继续实现 mask/ROI 拒绝规则与多帧稳定性验证，验证层只能重排序/拒绝候选，不能读取 Genesis 真值；
 4. 评分器已扩展为按 split、prompt、资产变体和可见/截断状态输出指标，后续用这些切片定位渲染域和小目标问题；
 5. 在视觉候选达到门槛后，再增加 mask/ROI 属性验证、多帧确认和 RGB-D 三维定位；当前 0.537 m mean / 1.385 m P95 误差不能用于停车控制；
