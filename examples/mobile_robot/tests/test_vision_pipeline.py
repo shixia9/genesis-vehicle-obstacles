@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from pathlib import Path
+
+import pytest
 
 import numpy as np
 
@@ -14,6 +17,11 @@ from examples.mobile_robot.vision import (
     PinholeIntrinsics,
     RgbdCalibration,
     VisionResult,
+    GroundingCandidate,
+    Owlv2Grounder,
+    OpenVocabularyDetector,
+    resolve_open_vocab_device,
+    YoloWorldGrounder,
     enrich_calibrated_depth,
     dominant_color,
     enrich_approximate_depth,
@@ -268,3 +276,80 @@ def test_runtime_evaluator_can_match_by_world_position() -> None:
     assert len(matches) == 1
     assert unmatched_predictions == []
     assert unmatched_truth == []
+
+
+def test_open_vocab_device_prefers_available_backend_or_cpu_fallback() -> None:
+    device, reason = resolve_open_vocab_device("auto")
+    assert device in {"mps", "cpu"}
+    assert reason
+    cpu_device, cpu_reason = resolve_open_vocab_device("cpu")
+    assert cpu_device == "cpu"
+    assert cpu_reason == "requested_cpu"
+    with pytest.raises(ValueError):
+        resolve_open_vocab_device("tpu")
+
+
+def test_open_vocab_candidate_is_json_safe_and_preserves_prompt() -> None:
+    candidate = GroundingCandidate(
+        prompt="a green pillar",
+        prompt_index=0,
+        confidence=0.73,
+        bbox_xyxy=(1, 2, 30, 40),
+        frame_id=4,
+        sim_time=0.08,
+        model_name="yolov8s-world.pt",
+        latency_ms=12.5,
+    )
+    data = candidate.to_dict()
+    assert data["prompt"] == "a green pillar"
+    assert data["bbox_xyxy"] == [1.0, 2.0, 30.0, 40.0]
+    with pytest.raises(ValueError):
+        GroundingCandidate(
+            prompt="bad",
+            prompt_index=0,
+            confidence=1.1,
+            bbox_xyxy=(0, 0, 1, 1),
+            frame_id=0,
+            sim_time=0.0,
+            model_name="test",
+            latency_ms=0.0,
+        )
+
+
+def test_open_vocab_detector_maps_candidates_without_touching_control() -> None:
+    class _FakeGrounder:
+        model_name = "fake-open-vocab"
+        device = "cpu"
+        device_reason = "test"
+        last_latency_ms = 3.5
+
+        def ground(self, frame, prompts):
+            return (
+                GroundingCandidate(
+                    prompt="an unknown platform",
+                    prompt_index=0,
+                    confidence=0.08,
+                    bbox_xyxy=(4, 5, 30, 40),
+                    frame_id=frame.frame_id,
+                    sim_time=frame.sim_time,
+                    model_name=self.model_name,
+                    latency_ms=self.last_latency_ms,
+                ),
+            )
+
+    detector = OpenVocabularyDetector.__new__(OpenVocabularyDetector)
+    detector.grounder = _FakeGrounder()
+    detector.prompts = ("an unknown platform",)
+    detector.decision_confidence = 0.05
+    result = detector.detect(make_frame(frame_id=8))
+    assert result.status == "candidate"
+    assert result.available is True
+    assert result.detections[0].label == "an unknown platform"
+    assert result.detections[0].confidence == 0.08
+
+
+def test_open_vocab_grounder_rejects_missing_local_weight_before_model_load(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError, match="does not exist"):
+        YoloWorldGrounder(tmp_path / "missing.pt", device="cpu")
+    with pytest.raises(FileNotFoundError, match="directory does not exist"):
+        Owlv2Grounder(tmp_path / "missing_owlv2", device="cpu")

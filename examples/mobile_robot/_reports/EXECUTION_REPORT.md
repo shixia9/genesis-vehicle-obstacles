@@ -406,6 +406,7 @@ Viewer 和车载 RGB 窗口均成功启动；1126 步到达、0 碰撞、45/45 �
 | VC4 颜色/距离/跟踪   | 已实现并完成 YOLO 诊断         | 三类颜色准确率 1.0；世界坐标误差约 0.28–0.33 m；box/cylinder 各有 2 条碎片轨迹                 |
 | VC5 控制/安全/性能   | YOLO 回归通过，指标待优化      | 1126 步到达、0 碰撞；推理 P50/P95=19.33/42.00 ms，首帧 max=875.31 ms                            |
 | VC6 LLM 预留接口     | 已定义                         | `TaskSpec`/事件边界已写入两份 TASK，目标导航尚未接入                                          |
+| OV1 开放词汇候选旁路 | 已实现但未达准入门槛           | YOLO-World 45 帧基准、实时相机旁路和候选日志已通过；OOD/第二模型/三维确认未完成              |
 
 ## 7. 已知限制和风险
 
@@ -415,17 +416,19 @@ Viewer 和车载 RGB 窗口均成功启动；1126 步到达、0 碰撞、45/45 �
 4. 当前 P0 视觉结果不直接改变导航动作，只保证 LiDAR 安全层；
 5. 受限沙箱没有 OpenGL context；宿主环境已经完成 ground-truth 回归，后续仍需在团队标准机器固定测试；
 6. URDF 四轮动力学仍应在运动学视觉闭环通过后单独校准；
-7. `pytest-xdist/pytest-timeout/ruff` 尚未齐备，正式交付前应补齐开发依赖并执行项目标准测试命令；当前纯 Python 视觉回归为 8 passed。
+7. `pytest-xdist/pytest-timeout/ruff` 尚未齐备，正式交付前应补齐开发依赖并执行项目标准测试命令；当前纯 Python 视觉回归为 12 passed。
 
 ## 8. 下一步交付顺序
 
-当前决策点：full_v2 已证明链路可用，但 box/cylinder 未达到每类 P/R ≥90%。下一轮若继续，应扩充这两类的姿态、遮挡、距离和光照样本；本报告不擅自把当前权重标记为最终模型，也不在未确认前切换模型架构或引入外部权重。
+当前决策点：闭集 YOLO 作为基线已保留，但继续增加闭集类别不能解决任意自然语言指代；开放词汇模型必须先通过 OOD grounding 门槛，再进入导航。
 
-1. 对 `box_obstacle`/`cylinder_obstacle` 增加姿态、遮挡、距离和光照变化，再按同一 test 协议重训；不得用当前 test 结果以外的数据调阈值。
-2. 将宿主 OpenGL 回归命令固定到团队标准机器/CI，至少覆盖 10 个固定随机种子后再宣称 P0 召回门槛；
-3. 继续校准 RGB-D 距离误差（当前闭环平均约 0.28–0.33 m，高于 P1 建议 0.20 m），优先使用 segmentation mask/ROI 而非粗 bbox；
-4. 补齐 `pytest-xdist/pytest-timeout/ruff`，执行项目默认标准测试并把结果追加到本报告；
-5. 视觉旁路稳定后，再评审视觉辅助限速/停车和 LLM `navigate_near_object` 集成。
+1. 在可联网环境完成 OWLv2 本地权重下载，并和 YOLO-World 使用同一帧集做对比；
+2. 生成绿色柱子、平台、新材质、多目标、目标缺失和诱饵物体的 Genesis OOD 测试集，按资产/语义组合划分；
+3. 补齐 Phrase Grounding Recall、Top-1、缺失目标误报率、歧义检出率和 RGB-D 三维误差；
+4. 实现 mask/ROI 属性验证、多帧确认和 `NO_VISUAL_MATCH`/`AMBIGUOUS_TARGET` 状态机；
+5. 通过冻结指标后才接入主动搜索、目标附近姿态和路径规划；
+6. 补齐 `pytest-xdist/pytest-timeout/ruff`，执行项目默认标准测试；
+7. LLM 保持独立，只消费确认后的目标证据并输出开放指代表达/约束，不输出坐标、路径或轮速。
 
 ## 9. 交付清单
 
@@ -441,4 +444,19 @@ Viewer 和车载 RGB 窗口均成功启动；1126 步到达、0 碰撞、45/45 �
 - [X] Genesis RGB-D 标定和世界坐标融合实现/回归；[runtime_metrics.json](../../../out/mobile_robot_yolo_full_v2/runtime_metrics.json) 已记录真实 YOLO 误差；
 - [X] 视觉单元 pytest 报告（使用 `-o addopts=''`）；
 - [X] 独立 `--annotated-view` 实时标注窗口及宿主 GUI 回归；
+- [X] 开放词汇 YOLO-World 候选器、OWLv2 离线适配器和 `open_vocab` 车载旁路；
 - [ ] 项目默认 pytest + ruff 标准测试报告。
+
+## 10. 开放词汇阶段追加结果（2026-09-09）
+
+开放词汇新增代码、基准、OWLv2 下载阻断和闭集 YOLO 回归详见独立报告：
+[OPEN_VOCABULARY_EXECUTION_REPORT.md](OPEN_VOCABULARY_EXECUTION_REPORT.md)。
+
+本阶段已完成：
+
+- [X] `OpenVocabularyGrounder` 协议、`GroundingCandidate` 和 MPS→CPU 设备策略；
+- [X] YOLO-World 本地候选器和 45 帧真实车载图像基准；
+- [X] `candidate`/`ambiguous`/`low_confidence`/`no_visual_match` 分类、JSONL 和标注输出；
+- [X] 可选 OWLv2 本地离线适配器（权重尚未下载成功）；
+- [X] 12 项视觉单元测试和原闭集 YOLO 单帧回归；
+- [ ] OOD 真值集、第二模型实测、三维目标确认和导航接入。

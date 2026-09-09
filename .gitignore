@@ -171,3 +171,9 @@ outputs/
 
 # YOLO training datasets
 /datasets/
+
+# Local open-vocabulary model weights. Download/cache these outside Git;
+# source code records the expected paths and SHA-256 in the execution report.
+/models/mobile_robot/open_vocab/*.pt
+/weights/clip/*.pt
+/yolov8s-world.pt

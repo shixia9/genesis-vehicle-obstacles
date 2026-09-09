@@ -78,6 +78,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+open_vocab = [
+    "transformers>=4.45,<5",
+    "safetensors",
+]
 dev = [
     "black",
     "pytest",

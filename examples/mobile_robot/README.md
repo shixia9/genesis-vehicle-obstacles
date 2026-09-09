@@ -167,6 +167,50 @@ env.close()
 
 对同一 seed 的 YOLO/ground-truth 运行日志，可用 `vision/evaluate_runtime.py` 做离线位置匹配、颜色/距离误差与延迟 P95 统计；真值不会进入运行时检测器。
 
+### 开放词汇视觉候选评估（实验阶段）
+
+任意自然语言目标不再通过增加闭集 YOLO 类别实现。当前提供本地 YOLO-World
+候选器和可选 OWLv2 后端；两者都只输出文本提示对应的候选框，不直接产生轮速、路径或导航目标。
+模型必须提前保存在本地，运行时不会自动下载：
+
+```bash
+.venv/bin/python examples/mobile_robot/vision/evaluate_open_vocab.py \
+  --backend yolo-world \
+  --model models/mobile_robot/open_vocab/yolov8s-world.pt \
+  --images out/mobile_robot_yolo_annotated_view/rgb_robot \
+  --prompt "yellow car" --prompt "green pillar" --prompt platform \
+  --prompt "red box" --prompt "blue cylinder" \
+  --device auto --imgsz 640 --infer-conf 0.001 --decision-conf 0.05 \
+  --annotate --output-dir out/open_vocab_benchmark
+```
+
+`--device auto` 遵循 MPS 优先、CPU 回退策略；当前机器若无可用 MPS 会在
+`summary.json` 标记 `device_reason=auto_cpu`。评估器将每帧分为
+`candidate`、`ambiguous`、`low_confidence` 和 `no_visual_match`，并写出
+`candidates.jsonl` 和标注图。只有经过 OOD 数据集、多帧确认及 RGB-D 定位验收后，候选才允许进入规划。
+
+也可以在 Genesis 车载相机上实时观察候选（此模式只记录/显示感知结果，仍使用原有 waypoint + LiDAR 控制，不会根据开放词汇候选改写车辆动作）：
+
+```bash
+.venv/bin/python examples/mobile_robot/room_navigation_vision.py \
+  --scenario vision_route_showcase --perception-mode open_vocab \
+  --vision-model models/mobile_robot/open_vocab/yolov8s-world.pt \
+  --vision-prompt "yellow car" --vision-prompt "green pillar" --vision-prompt platform \
+  --open-vocab-device auto --open-vocab-infer-conf 0.001 \
+  --open-vocab-decision-conf 0.05 --vision-imgsz 640 --vision-every 25 \
+  --vis --robot-view --annotated-view --save-vision \
+  --output-dir out/mobile_robot_open_vocab_live
+```
+
+`--robot-view` 仍是 Genesis 原始车载画面，`--annotated-view` 是独立的候选框窗口；
+没有候选或分数不足时会在日志中显示对应状态，不会强行创建导航目标。
+
+OWLv2 需要一个包含 `processor` 与模型文件的本地 `save_pretrained` 目录，调用方式为
+`--backend owlv2 --model <目录>`；缺少目录或文件会明确报错，不会联网下载。
+当前基准结果及下载阻断记录见 [_reports/OPEN_VOCABULARY_EXECUTION_REPORT.md](_reports/OPEN_VOCABULARY_EXECUTION_REPORT.md)。
+如需安装 OWLv2 可选 Python 依赖，可执行 `uv pip install --python .venv/bin/python -e '.[open_vocab]'`，
+权重仍需单独下载并保存到项目内指定目录。
+
 ## 四轮 URDF 动力学实验
 
 新增的 [room_navigation_urdf.py](room_navigation_urdf.py) 使用四个连续轮关节：左侧前后轮同步、右侧前后轮同步，车体通过 Genesis 动力学和轮胎接触运动。四轮编码器会生成轮里程计，RGB、深度相机、LiDAR 和 IMU 仍安装在 URDF 的 `base_link` 上。

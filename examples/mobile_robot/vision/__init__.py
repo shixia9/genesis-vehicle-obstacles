@@ -20,6 +20,14 @@ from .rgbd_fusion import enrich_approximate_depth, sample_bbox_depth
 from .tracker import ObjectTracker
 from .types import Detection, FramePacket, VisionResult, normalize_rgb_image
 from .yolo_detector import YoloDetector
+from .open_vocab_grounder import (
+    GroundingCandidate,
+    OpenVocabularyGrounder,
+    OpenVocabularyDetector,
+    YoloWorldGrounder,
+    resolve_open_vocab_device,
+)
+from .owlv2_grounder import Owlv2Grounder
 
 __all__ = [
     "Detection",
@@ -39,6 +47,12 @@ __all__ = [
     "annotate_rgb",
     "AnnotatedRgbView",
     "YoloDetector",
+    "GroundingCandidate",
+    "OpenVocabularyGrounder",
+    "OpenVocabularyDetector",
+    "YoloWorldGrounder",
+    "resolve_open_vocab_device",
+    "Owlv2Grounder",
     "VisionDetector",
     "VisionResult",
     "normalize_rgb_image",

@@ -23,6 +23,13 @@ Examples::
         --vision-model models/mobile_robot/car_obstacle.pt \
         --calibrated-depth \
         --save-vision --annotated-view
+
+    # Open-vocabulary camera side channel (does not alter vehicle control).
+    .venv/bin/python examples/mobile_robot/room_navigation_vision.py \
+        --scenario vision_route_showcase --perception-mode open_vocab \
+        --vision-model models/mobile_robot/open_vocab/yolov8s-world.pt \
+        --vision-prompt "yellow car" --vision-prompt "green pillar" \
+        --open-vocab-device auto --annotated-view
 """
 
 from __future__ import annotations
@@ -68,6 +75,7 @@ try:
         FramePacket,
         GroundTruthDetector,
         ObjectTracker,
+        OpenVocabularyDetector,
         build_genesis_rgbd_calibration,
         enrich_calibrated_depth,
         AnnotatedRgbView,
@@ -96,6 +104,7 @@ except ImportError:  # pragma: no cover - direct script execution
         FramePacket,
         GroundTruthDetector,
         ObjectTracker,
+        OpenVocabularyDetector,
         build_genesis_rgbd_calibration,
         enrich_calibrated_depth,
         AnnotatedRgbView,
@@ -124,14 +133,48 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--save-vision", action="store_true", help="Save annotated RGB and vision JSONL.")
     parser.add_argument(
         "--perception-mode",
-        choices=("disabled", "ground_truth", "yolo"),
+        choices=("disabled", "ground_truth", "yolo", "open_vocab"),
         default="disabled",
-        help="Visual backend; yolo requires an existing local model.",
+        help="Visual backend; yolo/open_vocab require explicit local weights.",
     )
-    parser.add_argument("--vision-model", type=Path, help="Local .pt/.onnx/.engine model path for yolo mode.")
+    parser.add_argument(
+        "--vision-model",
+        type=Path,
+        help="Local model path for yolo (.pt/.onnx/.engine) or open_vocab (backend directory/file).",
+    )
     parser.add_argument("--vision-device", default="cpu", help="YOLO device, e.g. cpu, cuda:0 or mps.")
     parser.add_argument("--vision-conf", type=float, default=0.5, help="YOLO confidence threshold.")
     parser.add_argument("--vision-imgsz", type=int, default=640, help="YOLO inference image size.")
+    parser.add_argument(
+        "--open-vocab-backend",
+        choices=("yolo-world", "owlv2"),
+        default="yolo-world",
+        help="Backend used by open_vocab mode.",
+    )
+    parser.add_argument(
+        "--vision-prompt",
+        action="append",
+        default=[],
+        help="Open-vocabulary text prompt; repeat for multiple prompts.",
+    )
+    parser.add_argument(
+        "--open-vocab-decision-conf",
+        type=float,
+        default=0.05,
+        help="Open-vocabulary acceptance threshold for status only; never controls the vehicle.",
+    )
+    parser.add_argument(
+        "--open-vocab-infer-conf",
+        type=float,
+        default=0.001,
+        help="Open-vocabulary model pre-filter confidence.",
+    )
+    parser.add_argument(
+        "--open-vocab-device",
+        default="auto",
+        choices=("auto", "mps", "cpu", "cuda", "cuda:0"),
+        help="Open-vocabulary device; auto is MPS first and CPU fallback.",
+    )
     parser.add_argument("--vision-every", type=int, default=5, help="Run visual inference every N steps.")
     parser.add_argument("--vision-max-age", type=float, default=0.5, help="Maximum usable result age in seconds.")
     parser.add_argument(
@@ -181,6 +224,24 @@ def _make_detector(args: argparse.Namespace, semantic_specs: tuple[Any, ...]):
         return DisabledDetector("disabled"), None
     if args.perception_mode == "ground_truth":
         return GroundTruthDetector(semantic_specs), None
+    if args.perception_mode == "open_vocab":
+        if args.vision_model is None:
+            return DisabledDetector("model_path_missing"), "--vision-model is required in open_vocab mode"
+        if not args.vision_prompt:
+            return DisabledDetector("prompt_missing"), "--vision-prompt is required in open_vocab mode"
+        try:
+            detector = OpenVocabularyDetector(
+                args.vision_model,
+                args.vision_prompt,
+                backend=args.open_vocab_backend,
+                device=args.open_vocab_device,
+                image_size=args.vision_imgsz,
+                confidence=args.open_vocab_infer_conf,
+                decision_confidence=args.open_vocab_decision_conf,
+            )
+            return detector, None
+        except Exception as exc:  # optional model/dependency errors are safe degradation cases
+            return DisabledDetector("model_unavailable"), f"{type(exc).__name__}: {exc}"
     if args.vision_model is None:
         return DisabledDetector("model_path_missing"), "--vision-model is required in yolo mode"
     try:
@@ -262,6 +323,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("--vision-every, --image-every and --log-every must be positive")
     if not 0.0 <= args.vision_conf <= 1.0:
         raise ValueError("--vision-conf must be in [0, 1]")
+    if not 0.0 <= args.open_vocab_infer_conf <= 1.0:
+        raise ValueError("--open-vocab-infer-conf must be in [0, 1]")
+    if not 0.0 <= args.open_vocab_decision_conf <= 1.0:
+        raise ValueError("--open-vocab-decision-conf must be in [0, 1]")
     if args.vision_max_age < 0.0:
         raise ValueError("--vision-max-age must be non-negative")
 
@@ -435,6 +500,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                         "frame": frame.to_metadata(),
                         "result": result.to_dict(),
                         "perception_mode": args.perception_mode,
+                        "open_vocab_prompts": (
+                            list(args.vision_prompt) if args.perception_mode == "open_vocab" else None
+                        ),
                         "depth_alignment": (
                             "calibrated_pinhole"
                             if args.calibrated_depth
@@ -567,6 +635,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "target_x": target_for_scenario(args.scenario)[0],
             "target_y": target_for_scenario(args.scenario)[1],
             "perception_mode": args.perception_mode,
+            "open_vocab_backend": args.open_vocab_backend if args.perception_mode == "open_vocab" else None,
+            "open_vocab_prompts": list(args.vision_prompt) if args.perception_mode == "open_vocab" else None,
             "detector_model": (
                 str(getattr(detector, "model_path"))
                 if getattr(detector, "model_path", None)
