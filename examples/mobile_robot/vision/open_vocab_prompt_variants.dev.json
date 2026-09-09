@@ -1,0 +1,31 @@
+{
+  "yellow car": [
+    "yellow car",
+    "a yellow car",
+    "yellow toy car",
+    "yellow vehicle",
+    "a yellow vehicle",
+    "small yellow car"
+  ],
+  "green pillar": [
+    "green pillar",
+    "a green pillar",
+    "green column",
+    "a green column",
+    "green cylinder"
+  ],
+  "orange platform": [
+    "orange platform",
+    "an orange platform",
+    "orange raised platform",
+    "orange slab",
+    "platform"
+  ],
+  "purple sculpture": [
+    "purple sculpture",
+    "a purple sculpture",
+    "purple statue",
+    "purple object",
+    "purple block"
+  ]
+}

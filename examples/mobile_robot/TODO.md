@@ -74,8 +74,8 @@ ARRIVED / TARGET_NOT_FOUND / AMBIGUOUS_TARGET / FAILED
 - [X] V0-03 建立 `OpenVocabularyGrounder` Protocol；当前适配器输出候选框、短语、置信度、帧号、仿真时间和延迟。
 - [~] V0-04 已完成 YOLO-World 适配和 45 帧基准；当前冻结 YOLO-World 为唯一实验主模型，OWLv2 暂不纳入准入路线。
 - [ ] V0-05 可选评估提示式分割器，用于把候选框细化为 mask，提升深度和目标边界精度。
-- [ ] V0-06 使用当前黄色车、红箱、蓝圆柱作为已知基准，同时新增从未参与训练的绿色柱子、平台、不同材质物体作为 zero-shot 测试。
-- [~] V0-07 已记录候选状态、逐 prompt 候选数量和 P50/P95；Recall、Top-1、缺失目标误报率和内存指标待 OOD 真值集生成后补齐。
+- [X] V0-06 使用当前黄色车、红箱、蓝圆柱作为已知基准，同时新增从未参与训练的绿色柱子、平台、不同材质物体作为 zero-shot 测试。
+- [X] V0-07 已记录候选状态、逐 prompt 候选数量和 P50/P95；OOD 真值集上的 Recall、Top-1、缺失目标误报率、歧义率、RGB-D 误差和延迟已输出（正式内存基线仍待补充）。
 - [ ] V0-08 根据冻结指标选择主 grounder；未达标时先停止集成并报告，不通过调高演示容错掩盖问题。
 
 **阶段出口：** 至少一个本地模型可以根据文本短语在未见类别/属性组合上产生有意义候选，并满足冻结后的延迟和误报门槛。
@@ -93,7 +93,8 @@ ARRIVED / TARGET_NOT_FOUND / AMBIGUOUS_TARGET / FAILED
 
 - [X] V2-01 当前评估器支持重复 `--prompt` 或 prompts 文件，并在 JSONL 中保留原 prompt。
 - [X] V2-02 当前 grounder 每帧输出全部候选，不在模型适配器内强行选择单一目标。
-- [ ] V2-03 使用颜色、尺寸、形状、左右/前后等属性与几何关系重新排序候选。
+- [X] V2-02a 评估器支持仅在 `dev` 调参的等价 prompt ensemble，并对同一物体的重复框做 IoU 去重；冻结模板已在 `ood_test` 复测。
+- [~] V2-03 已实现可选的 truth-free RGB 颜色/粗形状候选排序旁路；首轮 dev 实验未改善 Recall，仍需 mask/几何验证。
 - [ ] V2-04 使用 mask/ROI 减少背景颜色对属性判断的污染。
 - [ ] V2-05 目标不存在时输出 `NO_VISUAL_MATCH`，不得强制返回最相似区域。
 - [ ] V2-06 多个候选分数接近时输出 `AMBIGUOUS_TARGET`，附带候选 ID、截图和简短描述供用户选择。
@@ -144,11 +145,11 @@ ARRIVED / TARGET_NOT_FOUND / AMBIGUOUS_TARGET / FAILED
 
 ### V7：开放词汇评测与数据策略
 
-- [ ] V7-01 建立短语 grounding 测试集，覆盖未训练的类别、颜色、材质、尺度和空间关系。
-- [ ] V7-02 train/val/test 按物体资产、语义组合和场景划分，不按相邻帧随机拆分。
-- [ ] V7-03 指标至少包含：Phrase Grounding Recall@IoU、Top-1 选择准确率、目标缺失误报率、歧义检出率和三维定位误差。
+- [X] V7-01 建立短语 grounding 测试集，覆盖未训练的类别、颜色、材质、尺度和空间关系（当前 Genesis OOD 首版）。
+- [X] V7-02 train/val/test 按物体资产、语义组合和场景划分，不按相邻帧随机拆分。
+- [X] V7-03 指标至少包含：Phrase Grounding Recall@IoU、Top-1 选择准确率、目标缺失误报率、歧义检出率和三维定位误差。
 - [ ] V7-04 增加完整任务成功率：正确目标、正确停车范围、0 碰撞和正确终态。
-- [ ] V7-05 使用 Genesis segmentation 真值只做评测、自动构造表达和可选轻量适配训练，禁止运行时读取。
+- [X] V7-05 使用 Genesis segmentation 真值只做评测、自动构造表达和可选轻量适配训练，禁止运行时读取。
 - [ ] V7-06 若 zero-shot 不足，只微调 prompt/adapter 或领域特征，并保留完全未见类别作为 OOD test；不退回无限扩展闭集类别。
 - [ ] V7-07 至少运行 10 个固定 seed 和多目标/目标缺失/遮挡场景。
 

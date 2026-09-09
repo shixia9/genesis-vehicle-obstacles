@@ -28,6 +28,7 @@ from .open_vocab_grounder import (
     resolve_open_vocab_device,
 )
 from .owlv2_grounder import Owlv2Grounder
+from .open_vocab_validation import RegionEvidence, candidate_rank_score, region_evidence
 
 __all__ = [
     "Detection",
@@ -53,6 +54,9 @@ __all__ = [
     "YoloWorldGrounder",
     "resolve_open_vocab_device",
     "Owlv2Grounder",
+    "RegionEvidence",
+    "candidate_rank_score",
+    "region_evidence",
     "VisionDetector",
     "VisionResult",
     "normalize_rgb_image",

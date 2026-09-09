@@ -205,6 +205,42 @@ env.close()
 `--robot-view` 仍是 Genesis 原始车载画面，`--annotated-view` 是独立的候选框窗口；
 没有候选或分数不足时会在日志中显示对应状态，不会强行创建导航目标。
 
+生成并评估 Genesis OOD 数据集（仅评测，不训练固定类别）：
+
+```bash
+.venv/bin/python examples/mobile_robot/vision/generate_open_vocab_ood.py \
+  --layouts 12 --steps 1200 --sample-every 25 \
+  --output-dir datasets/mobile_robot_open_vocab_ood
+
+.venv/bin/python examples/mobile_robot/vision/evaluate_open_vocab_ood.py \
+  --model models/mobile_robot/open_vocab/yolov8s-world.pt \
+  --dataset datasets/mobile_robot_open_vocab_ood \
+  --device cpu --imgsz 640 --infer-conf 0.001 \
+  --decision-conf 0.05 --iou-threshold 0.5 --annotate \
+  --output-dir out/mobile_robot_open_vocab_ood_eval
+```
+
+只在开发集试验等价自然语言模板时，使用 `--split dev` 和 prompt ensemble 文件；
+模板去重后再评分，不能把 `ood_test` 用于反向调参：
+
+```bash
+.venv/bin/python examples/mobile_robot/vision/evaluate_open_vocab_ood.py \
+  --model models/mobile_robot/open_vocab/yolov8s-world.pt \
+  --dataset datasets/mobile_robot_open_vocab_ood --device cpu \
+  --split dev --infer-conf 0.001 --decision-conf 0.05 \
+  --prompt-variants-file examples/mobile_robot/vision/open_vocab_prompt_variants.dev.json \
+  --output-dir out/mobile_robot_open_vocab_dev_prompt_ensemble
+```
+
+开发集选择后，可在冻结的 `ood_test` 复测同一文件。评估汇总还会按 split、原始 prompt、
+资产变体以及可见/截断状态拆分，帮助定位渲染域失败，而不会把 OOD 真值传入运行时。
+需要检查候选框内的弱颜色/形状证据时可额外加 `--roi-rerank`；它只改变已接受候选的排序，
+不修改模型置信度，也不会替代多帧确认。
+
+该数据集保存 Genesis 实例 mask、深度和 prompt 真值，用于计算 Recall、Top-1、
+缺失目标误报率、歧义检出率及 RGB-D 误差；真值只在推理后参与评分，不会传入 YOLO-World。
+当前结果见 [_reports/OPEN_VOCABULARY_EXECUTION_REPORT.md](_reports/OPEN_VOCABULARY_EXECUTION_REPORT.md)。
+
 当前基准结果、实验推进矩阵和后续准入条件见 [_reports/OPEN_VOCABULARY_EXECUTION_REPORT.md](_reports/OPEN_VOCABULARY_EXECUTION_REPORT.md)。
 
 ## 四轮 URDF 动力学实验

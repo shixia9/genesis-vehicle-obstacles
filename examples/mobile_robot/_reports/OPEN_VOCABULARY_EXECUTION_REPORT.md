@@ -47,6 +47,11 @@
 - 记录候选数量、设备回退原因、P50/P95/平均/最大延迟；
 - 不访问 Genesis 真值，不把结果直接接入控制。
 
+新增 OOD 数据生成和评分工具：
+
+- [generate_open_vocab_ood.py](../vision/generate_open_vocab_ood.py)：只生成 RGB、深度、Genesis 实例 mask、物体资产真值和 prompt 清单，不生成 YOLO `dataset.yaml`，不训练固定类别；
+- [evaluate_open_vocab_ood.py](../vision/evaluate_open_vocab_ood.py)：推理完成后再读取真值计算 Recall、Top-1、缺失目标误报率、歧义检出率和 RGB-D 世界坐标误差。
+
 ### 2.3 Genesis 车载实时旁路
 
 `room_navigation_vision.py` 新增 `--perception-mode open_vocab`：
@@ -158,22 +163,125 @@ cylinder_obstacle 0.918
 | E1 离线多 prompt 基准 | 已完成但未达标 | 45 帧、5 个 prompt、候选 JSONL、标注图和延迟统计 | 真实 Phrase Recall、Top-1 正确率 |
 | E2 车载相机旁路 | 已完成 | Genesis 真实相机 5 帧、5 次推理、0 视觉异常、独立标注窗口 | 连续运行实时性、目标确认可靠性 |
 | E3 闭集回归保护 | 已完成 | 原闭集 YOLO 单帧 `car=0.953`、`cylinder_obstacle=0.918` | 不代表开放词汇泛化 |
-| E4 Genesis OOD 数据集 | 未开始 | 目前只有既有闭集展示场景帧 | 绿色柱子、平台、新材质、多目标、缺失目标、诱饵物体 |
-| E5 开放词汇指标 | 未完成 | 当前只有候选状态和延迟统计 | Recall、Top-1、缺失误报率、歧义检出率、3D 误差 |
+| E4 Genesis OOD 数据集 | 已完成 | 542 帧、12 layout、RGB/深度/实例 mask/资产真值/prompt 清单，layout-level split | 扩大资产和光照覆盖仍可继续 |
+| E5 开放词汇指标 | 已完成首轮但未达标 | Recall、Top-1、缺失误报率、歧义检出率、RGB-D 误差和延迟均已输出 | 需要提高泛化并重新验收 |
 | E6 导航接入 | 明确禁止 | 控制旁路保持 waypoint + LiDAR | 多帧确认、目标坐标、附近姿态和路径规划 |
 
 当前阶段出口是 **E4/E5 通过**，而不是模型能够成功返回任意一个候选框。
 
+### 6.1 OOD 数据集与 YOLO-World 评测结果
+
+正式数据集已生成：
+
+- 数据目录：[datasets/mobile_robot_open_vocab_ood](../../../datasets/mobile_robot_open_vocab_ood/)；
+- 生成配置：[generation_config.json](../../../datasets/mobile_robot_open_vocab_ood/generation_config.json)；
+- prompt 真值：[prompts.jsonl](../../../datasets/mobile_robot_open_vocab_ood/prompts.jsonl)；
+- 评测汇总：[summary.json](../../../out/mobile_robot_open_vocab_ood_eval/summary.json)；
+- 逐帧结果：[ood_results.jsonl](../../../out/mobile_robot_open_vocab_ood_eval/ood_results.jsonl)。
+
+数据规模：542 帧、12 个独立 layout，`dev=136`、`negative_test=136`、`ood_test=270`；
+切分在 layout 级完成，未将相邻帧随机拆到不同 split。每帧包含 RGB、原始深度、实例 mask、
+物体资产 ID、可见性、真值框和 prompt 目标 ID。生成配置明确标记 `closed_set_training=false`。
+
+冻结参数：YOLO-World 本地权重、`imgsz=640`、推理阈值 `0.001`、决策阈值 `0.05`、IoU 阈值 `0.5`、CPU。
+
+| 指标 | 结果 | 结论 |
+| --- | ---: | --- |
+| Phrase Grounding Recall@0.5 | 75/534 = **14.0%** | 未达标 |
+| Top-1 目标选择 | 75/534 = **14.0%** | 未达标 |
+| 目标不存在误报率 | 49/1626 = **3.0%** | 需要结合业务门槛判断 |
+| 目标在场景但当前视野外误报率 | 2/1634 = **0.12%** | 较低 |
+| 歧义检出率 | 0/15 = **0%** | 未达标 |
+| RGB-D 世界坐标误差（已接受候选） | mean **0.537 m**，P95 **1.385 m** | 未达标 |
+| 推理延迟 | P50 **94.1 ms**，P95 **153.0 ms** | 仅作旁路参考 |
+
+按 prompt 的可见目标 Recall：`green pillar=37.2%`、`orange platform=16.9%`、
+`yellow car=0%`、`purple sculpture=0%`。其中 `red traffic cone` 作为缺失目标诱饵的误报率为
+8.5%，说明不能只看正例候选数量。
+
+因此 E4 已完成，E5 已完成首轮测量但未通过准入；当前不能进入三维目标确认或路径规划。
+
+### 6.2 本轮 dev prompt ensemble 实验
+
+为避免用 `ood_test` 调参，本轮只在 `dev` split 比较了原始短语和等价自然语言模板。
+配置文件：[open_vocab_prompt_variants.dev.json](../vision/open_vocab_prompt_variants.dev.json)。
+等价模板的候选框先按 IoU `0.7` 去重，再按原始模型置信度决策；没有使用 Genesis 真值做运行时过滤。
+
+执行命令：
+
+```bash
+.venv/bin/python examples/mobile_robot/vision/evaluate_open_vocab_ood.py \
+  --model models/mobile_robot/open_vocab/yolov8s-world.pt \
+  --dataset datasets/mobile_robot_open_vocab_ood \
+  --device cpu --imgsz 640 --infer-conf 0.001 --decision-conf 0.05 \
+  --iou-threshold 0.5 --split dev \
+  --prompt-variants-file examples/mobile_robot/vision/open_vocab_prompt_variants.dev.json \
+  --output-dir out/mobile_robot_open_vocab_dev_prompt_ensemble_v2
+```
+
+| dev 指标 | 原始短语 | prompt ensemble | 变化 |
+| --- | ---: | ---: | ---: |
+| Phrase Grounding Recall@0.5 | 20/126 = 15.9% | 28/126 = **22.2%** | +6.3 pp |
+| 目标不存在误报率 | 14/408 = 3.43% | 13/408 = **3.19%** | -0.24 pp |
+| 当前视野外误报率 | 0/418 = 0% | 3/418 = 0.72% | 变差 |
+| 歧义检出率 | 0/3 = 0% | 1/3 = 33.3% | 仍不稳定 |
+
+按 prompt 的 Recall 为：`green pillar=51.9%`、`orange platform=32.6%`、
+`yellow car=0%`、`purple sculpture=0%`。因此 ensemble 只能作为候选生成改进，不能被解释为
+已经解决开放词汇泛化。
+
+阈值敏感性也在 `dev` 的已保存候选上做了离线检查：将决策阈值从 `0.05` 降到 `0.001`
+时 Recall 可升至 54.0%，但视野外误报率升至 24.6%；故冻结阈值仍为 `0.05`，不使用低阈值
+制造演示效果。
+
+### 6.3 冻结 `ood_test` 的 ensemble 复测
+
+在完成 dev 选择后，使用同一组模板、同一权重和阈值对未参与调参的 `ood_test` 运行：
+
+- 结果：[summary.json](../../../out/mobile_robot_open_vocab_ood_eval_prompt_ensemble/summary.json)；
+- 逐帧结果：[ood_results.jsonl](../../../out/mobile_robot_open_vocab_ood_eval_prompt_ensemble/ood_results.jsonl)。
+
+| ood_test 指标 | 首轮原始短语 | 冻结 ensemble | 结论 |
+| --- | ---: | ---: | --- |
+| Phrase Grounding Recall@0.5 | 14.0% | **23.1%** (61/264) | 有改善但未达标 |
+| 目标不存在误报率 | 3.0% | **2.22%** (18/810) | 有改善 |
+| 当前视野外误报率 | 0.12% | 0.61% (5/816) | 仍需约束 |
+| 歧义检出率 | 0% | 12.5% (1/8) | 未达标 |
+| RGB-D 世界坐标误差 | mean 0.537 m | mean 0.705 m | 未达标 |
+
+按 prompt 的 `ood_test` Recall：`green pillar=56.1%`、`orange platform=32.6%`、
+`yellow car=0%`、`purple sculpture=0%`；`red traffic cone` 缺失误报率为 6.67%。
+该结果确认 ensemble 不会把失败的黄色车辆和紫色物体问题隐藏起来，当前仍禁止进入三维定位、
+主动搜索和路径规划。
+
+### 6.4 ROI 证据验证层（实验，不改变置信度）
+
+新增 [open_vocab_validation.py](../vision/open_vocab_validation.py)，从候选框中心 ROI 提取弱颜色和
+粗形状证据，可选地只用于候选排序（`--roi-rerank`）。它不读取实例 mask、资产 ID 或世界坐标，
+也不会把弱证据改写成模型置信度；因此不会把验证层变成闭集分类器。
+
+在同一 `dev` ensemble 数据上打开 `--roi-rerank` 后，Recall、Top-1、误报率和歧义率均未变化，
+说明当前主要瓶颈是 YOLO-World 对 `yellow car`/`purple sculpture` 的候选召回，而不是候选排序。
+该层先保留为后续多帧确认和 mask/ROI 验证的接口，暂不作为导航准入依据。
+
 ## 7. 下一步准入顺序
 
-1. 冻结 YOLO-World 的模型、prompt、阈值、设备和输出协议，避免边测边改阈值；
-2. 生成真正的 Genesis OOD 测试集：绿色柱子、平台、新材质、多目标、目标缺失、诱饵物体；按物体资产和语义组合划分，不能按相邻帧随机拆分；
-3. 为每帧保存 RGB、Genesis 真值分割/实例框、物体资产 ID、语义 prompt、是否存在和遮挡信息；
-4. 实现离线指标：Phrase Grounding Recall@IoU、Top-1 目标选择、目标缺失误报率、歧义检出率、候选框深度和世界坐标误差；
-5. 在不控制车辆的前提下增加 mask/ROI 属性验证，明确 `NO_VISUAL_MATCH`、`AMBIGUOUS_TARGET` 和低置信度状态；
-6. 增加多帧确认和 RGB-D 三维定位，只有稳定 target ID、有效深度和通过 LiDAR 交叉检查的目标才可进入规划；
-7. 只有上述指标冻结并达标后，才实现主动搜索、目标附近姿态和路径规划；
-8. LLM 仍保持独立：只输出完整开放指代表达和导航约束，不输出坐标、路径或轮速。
+1. 保持当前 OOD test 不变，禁止用 test 结果反向调阈值；下一轮仍只在 `dev` split 做 prompt 模板、图像预处理和阈值实验；
+2. 已完成 prompt ensemble 的首轮实现和冻结复测，但 `yellow car`/`purple sculpture` 仍无召回；继续分析失败样本、诱饵误报和多目标歧义；
+3. ROI 颜色/形状证据验证层已实现为可选排序旁路，但首轮没有改善 Recall；继续实现 mask/ROI 拒绝规则与多帧稳定性验证，验证层只能重排序/拒绝候选，不能读取 Genesis 真值；
+4. 评分器已扩展为按 split、prompt、资产变体和可见/截断状态输出指标，后续用这些切片定位渲染域和小目标问题；
+5. 在视觉候选达到门槛后，再增加 mask/ROI 属性验证、多帧确认和 RGB-D 三维定位；当前 0.537 m mean / 1.385 m P95 误差不能用于停车控制；
+6. 只有 Recall、Top-1、缺失误报率、歧义检出率和三维误差同时达标后，才实现主动搜索、目标附近姿态和路径规划；
+7. LLM 仍保持独立：只输出完整开放指代表达和导航约束，不输出坐标、路径或轮速。
 
 在第 2～6 项未通过前，任何“行驶到黄色小车/绿色柱子/平台附近”的演示都只能作为候选可视化，
 不应宣称已经实现自然语言导航。
+
+## 8. 本轮交付验证
+
+- `compileall examples/mobile_robot`：通过；
+- 视觉单元测试：`13 passed`，包含新增 ROI 证据的 truth-free 契约测试；
+- 原闭集 YOLO test 回归：151 张图，precision `0.950`、recall `0.898`、mAP50 `0.943`；
+  原权重和 `perception-mode yolo` 路径未修改；
+- 开放词汇 `ood_test` ensemble：已生成逐帧 JSONL 和按 prompt/资产/可见性拆分的 summary，
+  但准入指标仍未通过，因此没有改动任何导航目标、waypoint 或轮速控制逻辑。

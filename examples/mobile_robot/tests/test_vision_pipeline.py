@@ -33,6 +33,7 @@ from examples.mobile_robot.room_navigation_observable import (
     VISION_ROUTE_WAYPOINTS,
 )
 from examples.mobile_robot.vision.evaluate_runtime import _match_frame
+from examples.mobile_robot.vision.open_vocab_validation import region_evidence
 
 
 def make_frame(*, frame_id: int = 0, pose=(0.0, 0.0, 0.22, 0.0)) -> FramePacket:
@@ -314,6 +315,17 @@ def test_open_vocab_candidate_is_json_safe_and_preserves_prompt() -> None:
             model_name="test",
             latency_ms=0.0,
         )
+
+
+def test_open_vocab_roi_evidence_is_truth_free_and_prompt_conditioned() -> None:
+    image = np.zeros((80, 100, 3), dtype=np.uint8)
+    image[10:60, 20:40] = (235, 220, 20)  # yellow, tall ROI
+    yellow = region_evidence(image, (20, 10, 40, 60), "yellow pillar")
+    blue = region_evidence(image, (20, 10, 40, 60), "blue pillar")
+    assert yellow.colour_score > blue.colour_score
+    assert yellow.shape_score > 0.5
+    with pytest.raises(ValueError):
+        region_evidence(np.zeros((10, 10), dtype=np.uint8), (0, 0, 2, 2), "yellow object")
 
 
 def test_open_vocab_detector_maps_candidates_without_touching_control() -> None:
