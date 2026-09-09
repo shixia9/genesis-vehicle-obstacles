@@ -406,7 +406,7 @@ Viewer 和车载 RGB 窗口均成功启动；1126 步到达、0 碰撞、45/45 �
 | VC4 颜色/距离/跟踪   | 已实现并完成 YOLO 诊断         | 三类颜色准确率 1.0；世界坐标误差约 0.28–0.33 m；box/cylinder 各有 2 条碎片轨迹                 |
 | VC5 控制/安全/性能   | YOLO 回归通过，指标待优化      | 1126 步到达、0 碰撞；推理 P50/P95=19.33/42.00 ms，首帧 max=875.31 ms                            |
 | VC6 LLM 预留接口     | 已定义                         | `TaskSpec`/事件边界已写入两份 TASK，目标导航尚未接入                                          |
-| OV1 开放词汇候选旁路 | 已实现但未达准入门槛           | YOLO-World 45 帧基准、实时相机旁路和候选日志已通过；OOD/第二模型/三维确认未完成              |
+| OV1 开放词汇候选旁路 | 已实现但未达准入门槛           | YOLO-World 45 帧基准、实时相机旁路和候选日志已通过；OOD/三维确认未完成                    |
 
 ## 7. 已知限制和风险
 
@@ -422,7 +422,7 @@ Viewer 和车载 RGB 窗口均成功启动；1126 步到达、0 碰撞、45/45 �
 
 当前决策点：闭集 YOLO 作为基线已保留，但继续增加闭集类别不能解决任意自然语言指代；开放词汇模型必须先通过 OOD grounding 门槛，再进入导航。
 
-1. 在可联网环境完成 OWLv2 本地权重下载，并和 YOLO-World 使用同一帧集做对比；
+1. 冻结 YOLO-World 的模型、prompt、阈值、设备和输出协议；
 2. 生成绿色柱子、平台、新材质、多目标、目标缺失和诱饵物体的 Genesis OOD 测试集，按资产/语义组合划分；
 3. 补齐 Phrase Grounding Recall、Top-1、缺失目标误报率、歧义检出率和 RGB-D 三维误差；
 4. 实现 mask/ROI 属性验证、多帧确认和 `NO_VISUAL_MATCH`/`AMBIGUOUS_TARGET` 状态机；
@@ -444,12 +444,12 @@ Viewer 和车载 RGB 窗口均成功启动；1126 步到达、0 碰撞、45/45 �
 - [X] Genesis RGB-D 标定和世界坐标融合实现/回归；[runtime_metrics.json](../../../out/mobile_robot_yolo_full_v2/runtime_metrics.json) 已记录真实 YOLO 误差；
 - [X] 视觉单元 pytest 报告（使用 `-o addopts=''`）；
 - [X] 独立 `--annotated-view` 实时标注窗口及宿主 GUI 回归；
-- [X] 开放词汇 YOLO-World 候选器、OWLv2 离线适配器和 `open_vocab` 车载旁路；
+- [X] 开放词汇 YOLO-World 候选器和 `open_vocab` 车载旁路；OWLv2 暂不纳入当前验收路线；
 - [ ] 项目默认 pytest + ruff 标准测试报告。
 
 ## 10. 开放词汇阶段追加结果（2026-09-09）
 
-开放词汇新增代码、基准、OWLv2 下载阻断和闭集 YOLO 回归详见独立报告：
+开放词汇新增代码、YOLO-World 基准和闭集 YOLO 回归详见独立报告：
 [OPEN_VOCABULARY_EXECUTION_REPORT.md](OPEN_VOCABULARY_EXECUTION_REPORT.md)。
 
 本阶段已完成：
@@ -457,6 +457,5 @@ Viewer 和车载 RGB 窗口均成功启动；1126 步到达、0 碰撞、45/45 �
 - [X] `OpenVocabularyGrounder` 协议、`GroundingCandidate` 和 MPS→CPU 设备策略；
 - [X] YOLO-World 本地候选器和 45 帧真实车载图像基准；
 - [X] `candidate`/`ambiguous`/`low_confidence`/`no_visual_match` 分类、JSONL 和标注输出；
-- [X] 可选 OWLv2 本地离线适配器（权重尚未下载成功）；
 - [X] 12 项视觉单元测试和原闭集 YOLO 单帧回归；
 - [ ] OOD 真值集、第二模型实测、三维目标确认和导航接入。

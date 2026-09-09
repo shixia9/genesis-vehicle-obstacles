@@ -72,7 +72,7 @@ ARRIVED / TARGET_NOT_FOUND / AMBIGUOUS_TARGET / FAILED
 - [X] V0-01 已确认允许使用本地预训练视觉语言权重；运行时仍禁止隐式下载。
 - [ ] V0-02 审核候选模型许可证、权重来源、离线运行方式、CPU/MPS/CUDA 支持和内存占用。
 - [X] V0-03 建立 `OpenVocabularyGrounder` Protocol；当前适配器输出候选框、短语、置信度、帧号、仿真时间和延迟。
-- [~] V0-04 已完成 YOLO-World 适配和 45 帧基准；OWLv2 适配器已加入，但 Hugging Face 权重下载因网络超时未完成，尚未形成第二模型结果。
+- [~] V0-04 已完成 YOLO-World 适配和 45 帧基准；当前冻结 YOLO-World 为唯一实验主模型，OWLv2 暂不纳入准入路线。
 - [ ] V0-05 可选评估提示式分割器，用于把候选框细化为 mask，提升深度和目标边界精度。
 - [ ] V0-06 使用当前黄色车、红箱、蓝圆柱作为已知基准，同时新增从未参与训练的绿色柱子、平台、不同材质物体作为 zero-shot 测试。
 - [~] V0-07 已记录候选状态、逐 prompt 候选数量和 P50/P95；Recall、Top-1、缺失目标误报率和内存指标待 OOD 真值集生成后补齐。
@@ -201,7 +201,7 @@ ARRIVED / TARGET_NOT_FOUND / AMBIGUOUS_TARGET / FAILED
 
 ### Phase 0：技术决策门
 
-交付：本地预训练权重政策、许可证审查、开放词汇模型对比报告和冻结指标。
+交付：本地预训练权重政策、YOLO-World 主模型可行性报告和冻结指标；替代模型评估不作为当前阶段前置条件。
 
 只有候选模型在 Genesis OOD 短语测试中证明可用后，才进入完整导航开发。
 

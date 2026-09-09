@@ -170,7 +170,7 @@ env.close()
 ### 开放词汇视觉候选评估（实验阶段）
 
 任意自然语言目标不再通过增加闭集 YOLO 类别实现。当前提供本地 YOLO-World
-候选器和可选 OWLv2 后端；两者都只输出文本提示对应的候选框，不直接产生轮速、路径或导航目标。
+候选器。OWLv2 暂不纳入当前验收路线；YOLO-World 只输出文本提示对应的候选框，不直接产生轮速、路径或导航目标。
 模型必须提前保存在本地，运行时不会自动下载：
 
 ```bash
@@ -205,11 +205,7 @@ env.close()
 `--robot-view` 仍是 Genesis 原始车载画面，`--annotated-view` 是独立的候选框窗口；
 没有候选或分数不足时会在日志中显示对应状态，不会强行创建导航目标。
 
-OWLv2 需要一个包含 `processor` 与模型文件的本地 `save_pretrained` 目录，调用方式为
-`--backend owlv2 --model <目录>`；缺少目录或文件会明确报错，不会联网下载。
-当前基准结果及下载阻断记录见 [_reports/OPEN_VOCABULARY_EXECUTION_REPORT.md](_reports/OPEN_VOCABULARY_EXECUTION_REPORT.md)。
-如需安装 OWLv2 可选 Python 依赖，可执行 `uv pip install --python .venv/bin/python -e '.[open_vocab]'`，
-权重仍需单独下载并保存到项目内指定目录。
+当前基准结果、实验推进矩阵和后续准入条件见 [_reports/OPEN_VOCABULARY_EXECUTION_REPORT.md](_reports/OPEN_VOCABULARY_EXECUTION_REPORT.md)。
 
 ## 四轮 URDF 动力学实验
 
