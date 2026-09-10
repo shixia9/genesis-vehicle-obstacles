@@ -29,6 +29,7 @@ from .open_vocab_grounder import (
 )
 from .owlv2_grounder import Owlv2Grounder
 from .open_vocab_validation import RegionEvidence, candidate_rank_score, region_evidence
+from .demo_language import instruction_to_visual_prompt
 
 __all__ = [
     "Detection",
@@ -57,6 +58,7 @@ __all__ = [
     "RegionEvidence",
     "candidate_rank_score",
     "region_evidence",
+    "instruction_to_visual_prompt",
     "VisionDetector",
     "VisionResult",
     "normalize_rgb_image",

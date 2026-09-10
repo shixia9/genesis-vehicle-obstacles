@@ -84,6 +84,7 @@ try:
         annotate_rgb,
         enrich_approximate_depth,
         enrich_colors,
+        instruction_to_visual_prompt,
     )
 except ImportError:  # pragma: no cover - direct script execution
     from room_navigation_observable import (  # type: ignore[no-redef]
@@ -113,6 +114,7 @@ except ImportError:  # pragma: no cover - direct script execution
         annotate_rgb,
         enrich_approximate_depth,
         enrich_colors,
+        instruction_to_visual_prompt,
     )
 
 
@@ -158,6 +160,25 @@ def parse_args() -> argparse.Namespace:
         help="Open-vocabulary text prompt; repeat for multiple prompts.",
     )
     parser.add_argument(
+        "--instruction",
+        help=(
+            "Minimal natural-language demo instruction, for example "
+            "'行驶到黄色小车附近'; converted to one YOLO-World visual prompt."
+        ),
+    )
+    parser.add_argument(
+        "--target-near-distance",
+        type=float,
+        default=0.85,
+        help="Demo stopping distance from the grounded target center, in metres.",
+    )
+    parser.add_argument(
+        "--target-confirm-frames",
+        type=int,
+        default=2,
+        help="Consecutive RGB-D observations required before target re-planning.",
+    )
+    parser.add_argument(
         "--open-vocab-decision-conf",
         type=float,
         default=0.05,
@@ -185,7 +206,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--calibrated-depth",
         action="store_true",
-        help="Fuse YOLO boxes with the Genesis RGB-D pinhole calibration and output coordinates.",
+        help="Fuse detections with the Genesis RGB-D pinhole calibration and output coordinates.",
     )
     parser.add_argument("--image-every", type=int, default=25, help="Save/display images every N steps.")
     parser.add_argument("--log-every", type=int, default=10, help="Print telemetry every N steps.")
@@ -316,7 +337,34 @@ def _file_sha256(path: Path | None) -> str | None:
     return digest.hexdigest()
 
 
+def _nearby_waypoint(
+    target_world: np.ndarray,
+    robot_pose: np.ndarray,
+    clearance_m: float,
+) -> tuple[float, float]:
+    """Return a simple point before the target, keeping the demo explainable."""
+
+    target_xy = np.asarray(target_world[:2], dtype=np.float64)
+    robot_xy = np.asarray(robot_pose[:2], dtype=np.float64)
+    direction = target_xy - robot_xy
+    distance = float(np.linalg.norm(direction))
+    if distance <= 1e-6:
+        return float(target_xy[0]), float(target_xy[1])
+    point = target_xy - direction / distance * float(clearance_m)
+    return float(point[0]), float(point[1])
+
+
 def run(args: argparse.Namespace) -> dict[str, Any]:
+    resolved_visual_prompt: str | None = None
+    if args.instruction:
+        if args.perception_mode != "open_vocab":
+            raise ValueError("--instruction requires --perception-mode open_vocab")
+        if args.vision_prompt:
+            raise ValueError("use --instruction or --vision-prompt, not both")
+        resolved_visual_prompt = instruction_to_visual_prompt(args.instruction)
+        args.vision_prompt = [resolved_visual_prompt]
+        # The demo needs a world point to create the temporary target waypoint.
+        args.calibrated_depth = True
     if args.steps <= 0 or args.dt <= 0.0:
         raise ValueError("--steps and --dt must be positive")
     if args.vision_every <= 0 or args.image_every <= 0 or args.log_every <= 0:
@@ -329,6 +377,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("--open-vocab-decision-conf must be in [0, 1]")
     if args.vision_max_age < 0.0:
         raise ValueError("--vision-max-age must be non-negative")
+    if args.target_near_distance <= 0.0:
+        raise ValueError("--target-near-distance must be positive")
+    if args.target_confirm_frames <= 0:
+        raise ValueError("--target-confirm-frames must be positive")
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     for directory in ("rgb", "rgb_robot", "rgb_robot_annotated", "depth"):
@@ -366,6 +418,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     last_result: VisionResult | None = None
     last_vision_frame_id: int | None = None
     last_vision_result_age = None
+    target_lock = False
+    target_confirm_count = 0
+    target_world_position: tuple[float, float, float] | None = None
+    target_near_waypoint: tuple[float, float] | None = None
+    last_candidate_world: np.ndarray | None = None
     observation_step = 0
     last_lidar = np.full(72, 6.0, dtype=np.float32)
     telemetry_path = args.output_dir / "telemetry.csv"
@@ -452,7 +509,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 started = time.perf_counter()
                 try:
                     result = detector.detect(frame)
-                    if args.perception_mode == "yolo":
+                    if args.perception_mode in {"yolo", "open_vocab"}:
                         result = enrich_colors(frame, result)
                         if args.calibrated_depth:
                             result = enrich_calibrated_depth(
@@ -461,13 +518,55 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                                 rgbd_calibration,
                                 robot_pose=observation["robot_pose"],
                             )
-                        elif args.approx_depth:
+                        elif args.approx_depth and args.perception_mode == "yolo":
                             result = enrich_approximate_depth(
                                 result,
                                 observation["depth"],
                                 rgb_shape=(frame.height, frame.width),
                             )
                     result = tracker.update(result)
+                    if args.instruction and not target_lock:
+                        grounded = [
+                            detection
+                            for detection in result.detections
+                            if detection.confidence >= args.open_vocab_decision_conf
+                            and detection.position_world is not None
+                        ]
+                        best_grounded = max(grounded, key=lambda item: item.confidence, default=None)
+                        if best_grounded is None:
+                            target_confirm_count = 0
+                            last_candidate_world = None
+                        else:
+                            candidate_world = np.asarray(best_grounded.position_world, dtype=np.float64)
+                            candidate_is_stable = (
+                                last_candidate_world is not None
+                                and float(np.linalg.norm(candidate_world - last_candidate_world)) < 1.25
+                            )
+                            target_confirm_count = target_confirm_count + 1 if candidate_is_stable else 1
+                            last_candidate_world = candidate_world
+                            if target_confirm_count >= args.target_confirm_frames:
+                                target_world_position = tuple(float(value) for value in candidate_world)
+                                target_near_waypoint = _nearby_waypoint(
+                                    candidate_world,
+                                    np.asarray(observation["robot_pose"], dtype=np.float64),
+                                    args.target_near_distance,
+                                )
+                                # Replace only the current demo route. The
+                                # existing controller and LiDAR safety layer
+                                # remain responsible for wheel commands.
+                                controller.waypoints = (
+                                    np.asarray(target_near_waypoint, dtype=np.float32),
+                                )
+                                controller.waypoint_idx = 0
+                                controller.enable_detour = True
+                                target_lock = True
+                                reached = False
+                                print(
+                                    "target_confirmed "
+                                    f"prompt={args.vision_prompt[0]!r} "
+                                    f"world=({candidate_world[0]:+.2f},{candidate_world[1]:+.2f}) "
+                                    f"near=({target_near_waypoint[0]:+.2f},{target_near_waypoint[1]:+.2f})"
+                                )
                     inference_count += 1
                 except Exception as exc:  # detector failures never own the control loop
                     result = _error_result(frame, f"inference_error:{type(exc).__name__}")
@@ -593,6 +692,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     "vision_result_age_ms": (
                         last_vision_result_age * 1000.0 if last_vision_result_age is not None else None
                     ),
+                    "target_lock": bool(target_lock),
+                    "target_world_x": None if target_world_position is None else target_world_position[0],
+                    "target_world_y": None if target_world_position is None else target_world_position[1],
                     "nearest_vision_label": nearest_label,
                     "nearest_vision_distance_m": nearest_distance,
                     "reached": bool(reached),
@@ -606,7 +708,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     f"lidar_front_min={front_min_lidar:.2f} cmd=({linear_speed:+.2f},{angular_speed:+.2f})"
                 )
 
-            if reached or collided:
+            demo_target_reached = bool(args.instruction and target_lock and reached)
+            if collided or demo_target_reached or (reached and not args.instruction):
                 break
         else:
             timed_out = True
@@ -634,9 +737,17 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "final_y": float(final_position[1]),
             "target_x": target_for_scenario(args.scenario)[0],
             "target_y": target_for_scenario(args.scenario)[1],
+            "command_target_x": float(controller.target[0]),
+            "command_target_y": float(controller.target[1]),
             "perception_mode": args.perception_mode,
             "open_vocab_backend": args.open_vocab_backend if args.perception_mode == "open_vocab" else None,
             "open_vocab_prompts": list(args.vision_prompt) if args.perception_mode == "open_vocab" else None,
+            "user_instruction": args.instruction,
+            "resolved_visual_prompt": resolved_visual_prompt,
+            "target_lock": target_lock,
+            "target_confirm_frames": args.target_confirm_frames if args.instruction else None,
+            "target_world_position": None if target_world_position is None else list(target_world_position),
+            "target_near_waypoint": None if target_near_waypoint is None else list(target_near_waypoint),
             "detector_model": (
                 str(getattr(detector, "model_path"))
                 if getattr(detector, "model_path", None)

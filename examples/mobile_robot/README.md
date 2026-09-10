@@ -205,6 +205,30 @@ env.close()
 `--robot-view` 仍是 Genesis 原始车载画面，`--annotated-view` 是独立的候选框窗口；
 没有候选或分数不足时会在日志中显示对应状态，不会强行创建导航目标。
 
+### 最小自然语言目标 Demo（视觉/控制侧）
+
+为了先演示“指令 → 视觉目标 → RGB-D 坐标 → 目标附近航点”，可以直接输入一句中文指令：
+
+```bash
+.venv/bin/python examples/mobile_robot/room_navigation_vision.py \
+  --scenario vision_route_showcase \
+  --perception-mode open_vocab \
+  --open-vocab-backend yolo-world \
+  --vision-model models/mobile_robot/open_vocab/yolov8s-world.pt \
+  --instruction "行驶到黄色小车附近" \
+  --open-vocab-device auto \
+  --open-vocab-infer-conf 0.001 \
+  --open-vocab-decision-conf 0.05 \
+  --vision-imgsz 640 --vision-every 25 \
+  --vis --robot-view --annotated-view \
+  --save-vision --output-dir out/mobile_robot_nl_demo
+```
+
+该 Demo 会把常见中文颜色/物体词转换成一个 YOLO-World prompt，连续确认目标后，使用已知
+Genesis RGB-D 标定计算目标附近临时航点，并交给原有 waypoint + LiDAR 控制器。画面、
+`vision_results.jsonl` 和 `summary.json` 会保存在输出目录。它是视觉/控制侧的最小演示：
+复杂空间关系、多语言改写和任意现实物体的完整语义解析仍由后续 LLM 适配器负责，LLM 不输出轮速或路径。
+
 生成并评估 Genesis OOD 数据集（仅评测，不训练固定类别）：
 
 ```bash

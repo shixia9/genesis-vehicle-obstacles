@@ -26,6 +26,7 @@ from examples.mobile_robot.vision import (
     dominant_color,
     enrich_approximate_depth,
     sample_aligned_depth,
+    instruction_to_visual_prompt,
 )
 from examples.mobile_robot.room_navigation_observable import (
     CarConfig,
@@ -326,6 +327,13 @@ def test_open_vocab_roi_evidence_is_truth_free_and_prompt_conditioned() -> None:
     assert yellow.shape_score > 0.5
     with pytest.raises(ValueError):
         region_evidence(np.zeros((10, 10), dtype=np.uint8), (0, 0, 2, 2), "yellow object")
+
+
+def test_demo_instruction_keeps_unknown_words_and_maps_common_chinese_words() -> None:
+    assert instruction_to_visual_prompt("行驶到黄色小车附近") == "yellow car"
+    assert instruction_to_visual_prompt("go to the orange platform") == "orange platform"
+    assert instruction_to_visual_prompt("go to an unfamiliar sculpture") == "unfamiliar sculpture"
+    assert instruction_to_visual_prompt("去一个未知的地点") == "去一个未知的地点"
 
 
 def test_open_vocab_detector_maps_candidates_without_touching_control() -> None:

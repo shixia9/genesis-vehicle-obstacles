@@ -318,3 +318,22 @@ cylinder_obstacle 0.918
   原权重和 `perception-mode yolo` 路径未修改；
 - 开放词汇 `ood_test` ensemble：已生成逐帧 JSONL 和按 prompt/资产/可见性拆分的 summary，
   但准入指标仍未通过，因此没有改动任何导航目标、waypoint 或轮速控制逻辑。
+
+## 9. 最小自然语言 Demo 状态
+
+已在 `room_navigation_vision.py` 增加一个显式 `--instruction` 入口，用于先演示视觉/控制侧的
+最小链路：
+
+```text
+用户指令 → 简单短语转换 → YOLO-World 候选 → 连续 RGB-D 确认
+          → 目标附近临时航点 → 原 waypoint + LiDAR 控制器
+```
+
+该入口不会读取 Genesis 真值，也不会改变闭集 YOLO 路径。当前短语转换器只处理少量常见中文词，
+未知英文词会原样保留；复杂关系（例如“柱子后面的平台”）、多语言改写和真正的任意现实物品
+语义仍由独立 LLM 适配器负责。由于当前 OOD 指标未达标，这个 Demo 适合展示链路和可视化，
+不应作为任意目标可靠到达的验收结果。
+
+自动化环境中的无 GUI 冒烟运行受到宿主 OpenGL 限制（`Failed to find an OpenGL 3.2+ core profile`
+而无法创建 Genesis 渲染器）；CLI 解析、14 项视觉单元测试和代码编译均通过。请在有 Genesis
+WindowServer/OpenGL 的本机终端运行 README 中的可视化命令完成实际窗口演示。
