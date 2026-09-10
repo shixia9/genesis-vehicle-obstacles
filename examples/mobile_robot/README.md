@@ -189,7 +189,7 @@ env.close()
 `candidate`、`ambiguous`、`low_confidence` 和 `no_visual_match`，并写出
 `candidates.jsonl` 和标注图。只有经过 OOD 数据集、多帧确认及 RGB-D 定位验收后，候选才允许进入规划。
 
-也可以在 Genesis 车载相机上实时观察候选（此模式只记录/显示感知结果，仍使用原有 waypoint + LiDAR 控制，不会根据开放词汇候选改写车辆动作）：
+也可以在 Genesis 车载相机上实时观察候选（不带 `--instruction` 时，此模式只记录/显示感知结果，仍使用原有 waypoint + LiDAR 控制）：
 
 ```bash
 .venv/bin/python examples/mobile_robot/room_navigation_vision.py \
@@ -203,7 +203,7 @@ env.close()
 ```
 
 `--robot-view` 仍是 Genesis 原始车载画面，`--annotated-view` 是独立的候选框窗口；
-没有候选或分数不足时会在日志中显示对应状态，不会强行创建导航目标。
+没有候选或深度无效时会在日志中显示对应状态，不会强行创建导航目标。
 
 ### 最小自然语言目标 Demo（视觉/控制侧）
 
@@ -219,15 +219,30 @@ env.close()
   --open-vocab-device auto \
   --open-vocab-infer-conf 0.001 \
   --open-vocab-decision-conf 0.05 \
+  --target-lock-conf 0.001 \
   --vision-imgsz 640 --vision-every 25 \
   --vis --robot-view --annotated-view \
   --save-vision --output-dir out/mobile_robot_nl_demo
 ```
 
 该 Demo 会把常见中文颜色/物体词转换成一个 YOLO-World prompt，连续确认目标后，使用已知
-Genesis RGB-D 标定计算目标附近临时航点，并交给原有 waypoint + LiDAR 控制器。画面、
-`vision_results.jsonl` 和 `summary.json` 会保存在输出目录。它是视觉/控制侧的最小演示：
+Genesis RGB-D 标定计算目标附近临时航点，并通过 `replace_waypoints()` 交给原有 waypoint + LiDAR
+控制器。`summary.json` 中的 `navigation_mode` 会从 `searching` 变为 `target_locked`，
+`active_waypoints` 会从搜索航点切换为单个目标航点，且 `command_target_x/y` 应与
+`target_near_waypoint` 一致；这才表示车辆已经脱离固定搜索路线。
+画面、`vision_results.jsonl` 和 `summary.json` 会保存在输出目录。它是视觉/控制侧的最小演示：
 复杂空间关系、多语言改写和任意现实物体的完整语义解析仍由后续 LLM 适配器负责，LLM 不输出轮速或路径。
+
+注意：`--open-vocab-decision-conf` 只控制日志中的 `candidate/low_confidence` 状态，
+`--target-lock-conf` 才控制是否允许 RGB-D 候选接管导航。当前本地 YOLO-World 权重在 Genesis
+小图上的原始分数通常约为 0.001～0.02，因此 Demo 默认锁定阈值为 0.001；正式验收仍需用
+OOD 指标重新标定阈值。若搜索路线结束仍未获得有效世界坐标，程序会停止并写入
+`termination_reason=target_not_found`，不会继续驶向旧固定终点。
+
+另外，提示词中明确出现 `yellow/green/red/blue` 等颜色时，候选框还必须通过独立 RGB ROI
+颜色校验；例如画面中只有黄色小车时输入“绿色平台”，会记录
+`target_candidate_status=attribute_mismatch` 并停止为 `TARGET_NOT_FOUND`，不会把黄色小车
+改名成绿色平台。未包含这些已知颜色属性的任意文本仍交给 YOLO-World，不会退化成固定物体类别表。
 
 生成并评估 Genesis OOD 数据集（仅评测，不训练固定类别）：
 

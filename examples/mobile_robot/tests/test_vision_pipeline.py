@@ -33,6 +33,11 @@ from examples.mobile_robot.room_navigation_observable import (
     DifferentialDriveController,
     VISION_ROUTE_WAYPOINTS,
 )
+from examples.mobile_robot.room_navigation_vision import (
+    _best_grounded_detection,
+    _nearby_waypoint,
+    _prompt_expected_colors,
+)
 from examples.mobile_robot.vision.evaluate_runtime import _match_frame
 from examples.mobile_robot.vision.open_vocab_validation import region_evidence
 
@@ -259,6 +264,78 @@ def test_waypoint_controller_keeps_lidar_safety_priority() -> None:
     assert np.isfinite(clear[0]) and np.isfinite(clear[1])
     assert blocked[0] == 0.0
     assert abs(blocked[1]) == CarConfig().max_angular_speed
+
+
+def test_runtime_route_replacement_restarts_waypoint_and_detour_state() -> None:
+    controller = DifferentialDriveController(CarConfig(), VISION_ROUTE_WAYPOINTS)
+    controller.waypoint_idx = 3
+    controller.detour_phase = "lateral"
+    controller.replace_waypoints(((1.2, -0.4),), enable_detour=True)
+
+    assert controller.waypoint_idx == 0
+    assert np.allclose(controller.target, (1.2, -0.4))
+    assert controller.detour_phase is None
+    assert controller.enable_detour is True
+    linear, angular, arrived = controller.command(
+        np.asarray((-2.0, 0.0), dtype=np.float32),
+        0.0,
+        np.full(72, 6.0, dtype=np.float32),
+    )
+    assert linear > 0.0
+    assert angular < 0.0
+    assert arrived is False
+
+
+def test_instruction_target_plan_uses_world_position_not_fixed_route() -> None:
+    result = VisionResult(
+        frame_id=2,
+        sim_time=0.04,
+        model_name="yolo-world",
+        latency_ms=2.0,
+        status="low_confidence",
+        detections=(
+            Detection(
+                class_id=0,
+                label="unseen sculpture",
+                confidence=0.008,
+                bbox_xyxy=(20, 20, 50, 60),
+                position_world=(1.8, 0.7, 0.3),
+                distance_confidence=0.8,
+            ),
+        ),
+    )
+    detection = _best_grounded_detection(result, confidence=0.001)
+    assert detection is not None
+    waypoint = _nearby_waypoint(
+        np.asarray(detection.position_world),
+        np.asarray((0.0, 0.0)),
+        0.5,
+    )
+    assert np.allclose(waypoint, (1.334, 0.519), atol=0.002)
+
+
+def test_prompt_colour_guard_rejects_yellow_roi_for_green_target() -> None:
+    detection = Detection(
+        class_id=0,
+        label="green platform",
+        confidence=0.004,
+        bbox_xyxy=(20, 20, 50, 60),
+        color="yellow",
+        color_confidence=0.99,
+        position_world=(1.8, 0.7, 0.3),
+        distance_confidence=0.8,
+    )
+    result = VisionResult(
+        frame_id=2,
+        sim_time=0.04,
+        model_name="yolo-world",
+        latency_ms=2.0,
+        status="low_confidence",
+        detections=(detection,),
+    )
+    assert _prompt_expected_colors("green platform") == ("green",)
+    assert _best_grounded_detection(result, confidence=0.001) is detection
+    assert _best_grounded_detection(result, confidence=0.001, prompt="green platform") is None
 
 
 def test_runtime_evaluator_can_match_by_world_position() -> None:

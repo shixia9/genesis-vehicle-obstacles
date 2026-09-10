@@ -1,10 +1,11 @@
-"""Kinematic showcase: drive a simple route while continuously recognizing objects.
+"""Search with RGB-D vision and navigate to a text-described target.
 
-The vehicle policy remains the existing waypoint + LiDAR safety controller. Visual
-perception runs as an explicitly observable side channel, so a missing or slow
-model cannot silently replace the safety controller. The default ``disabled``
-mode is useful for the control baseline; ``ground_truth`` is deterministic for
-runtime/overlay/tracker tests; ``yolo`` requires an existing local weight file.
+The vehicle policy remains the existing waypoint + LiDAR safety controller. Without
+``--instruction`` this program preserves the fixed-route baseline. With an
+instruction, that route is only a bounded visual-search route; after a confirmed
+RGB-D target, the controller is replanned to one temporary waypoint near that
+target. A missing or slow model never invents a target and ends with
+``TARGET_NOT_FOUND`` instead of driving to the baseline route's final point.
 
 Examples::
 
@@ -41,6 +42,7 @@ import hashlib
 import json
 import math
 import os
+import re
 from pathlib import Path
 import time
 from types import SimpleNamespace
@@ -182,7 +184,16 @@ def parse_args() -> argparse.Namespace:
         "--open-vocab-decision-conf",
         type=float,
         default=0.05,
-        help="Open-vocabulary acceptance threshold for status only; never controls the vehicle.",
+        help="Open-vocabulary confidence threshold used for the reported perception status.",
+    )
+    parser.add_argument(
+        "--target-lock-conf",
+        type=float,
+        default=0.001,
+        help=(
+            "Minimum candidate confidence for instruction target locking. YOLO-World "
+            "scores are calibrated separately from the status threshold."
+        ),
     )
     parser.add_argument(
         "--open-vocab-infer-conf",
@@ -354,6 +365,80 @@ def _nearby_waypoint(
     return float(point[0]), float(point[1])
 
 
+_PROMPT_COLOR_TERMS = {
+    "yellow": "yellow",
+    "green": "green",
+    "red": "red",
+    "blue": "blue",
+    "黄色": "yellow",
+    "绿色": "green",
+    "红色": "red",
+    "蓝色": "blue",
+}
+
+
+def _prompt_expected_colors(prompt: str | None) -> tuple[str, ...]:
+    """Extract RGB-verifiable colour attributes from an open prompt.
+
+    This is an attribute-consistency guard, not an object category list. Terms
+    outside the small RGB attribute vocabulary are left unconstrained so an
+    arbitrary object phrase can still reach the open-vocabulary model.
+    """
+
+    if not prompt:
+        return ()
+    text = str(prompt).strip().lower()
+    found: list[str] = []
+    for term, canonical in _PROMPT_COLOR_TERMS.items():
+        if term.isascii():
+            present = re.search(rf"\b{re.escape(term)}\b", text) is not None
+        else:
+            present = term in text
+        if present and canonical not in found:
+            found.append(canonical)
+    return tuple(found)
+
+
+def _best_grounded_detection(
+    result: VisionResult,
+    *,
+    confidence: float,
+    prompt: str | None = None,
+) -> Any | None:
+    """Select the strongest open-vocabulary candidate usable for navigation.
+
+    A candidate must have a finite RGB-D world position. When the prompt
+    contains a colour, the independent RGB ROI attribute must agree. Selection
+    is otherwise based on prompt-conditioned detections and evidence quality;
+    no fixed object-class list is consulted, so arbitrary text prompts remain
+    supported.
+    """
+
+    expected_colors = _prompt_expected_colors(prompt)
+    grounded = []
+    for detection in result.detections:
+        if float(detection.confidence) < float(confidence):
+            continue
+        position = detection.position_world
+        if position is None:
+            continue
+        values = np.asarray(position, dtype=np.float64).reshape(-1)
+        if values.size < 3 or not np.all(np.isfinite(values[:3])):
+            continue
+        if detection.distance_confidence is not None and float(detection.distance_confidence) <= 0.0:
+            continue
+        if expected_colors:
+            # A coloured referring expression must agree with the independent
+            # RGB ROI attribute check. A text model's low-confidence box alone
+            # cannot relabel a yellow object as a green one.
+            if detection.color not in expected_colors:
+                continue
+            if detection.color_confidence is None or float(detection.color_confidence) < 0.35:
+                continue
+        grounded.append(detection)
+    return max(grounded, key=lambda item: float(item.confidence), default=None)
+
+
 def run(args: argparse.Namespace) -> dict[str, Any]:
     resolved_visual_prompt: str | None = None
     if args.instruction:
@@ -375,6 +460,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("--open-vocab-infer-conf must be in [0, 1]")
     if not 0.0 <= args.open_vocab_decision_conf <= 1.0:
         raise ValueError("--open-vocab-decision-conf must be in [0, 1]")
+    if not 0.0 <= args.target_lock_conf <= 1.0:
+        raise ValueError("--target-lock-conf must be in [0, 1]")
     if args.vision_max_age < 0.0:
         raise ValueError("--vision-max-age must be non-negative")
     if args.target_near_distance <= 0.0:
@@ -423,15 +510,20 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     target_world_position: tuple[float, float, float] | None = None
     target_near_waypoint: tuple[float, float] | None = None
     last_candidate_world: np.ndarray | None = None
+    navigation_mode = "searching" if args.instruction else "fixed_waypoints"
+    target_not_found = False
+    target_candidate_status = "searching" if args.instruction else "inactive"
+    target_attribute_mismatch_count = 0
     observation_step = 0
     last_lidar = np.full(72, 6.0, dtype=np.float32)
     telemetry_path = args.output_dir / "telemetry.csv"
     sensor_log_path = args.output_dir / "sensor_observations.jsonl"
     vision_log_path = args.output_dir / "vision_results.jsonl"
 
+    search_waypoints = waypoints_for_scenario(args.scenario)
     controller = DifferentialDriveController(
         CarConfig(),
-        waypoints=waypoints_for_scenario(args.scenario),
+        waypoints=search_waypoints,
         enable_detour=args.scenario == "room_center_obstacle",
         dt=args.dt,
     )
@@ -526,13 +618,22 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                             )
                     result = tracker.update(result)
                     if args.instruction and not target_lock:
-                        grounded = [
-                            detection
-                            for detection in result.detections
-                            if detection.confidence >= args.open_vocab_decision_conf
-                            and detection.position_world is not None
-                        ]
-                        best_grounded = max(grounded, key=lambda item: item.confidence, default=None)
+                        unconstrained_candidate = _best_grounded_detection(
+                            result,
+                            confidence=args.target_lock_conf,
+                        )
+                        best_grounded = _best_grounded_detection(
+                            result,
+                            confidence=args.target_lock_conf,
+                            prompt=args.vision_prompt[0] if args.vision_prompt else None,
+                        )
+                        if unconstrained_candidate is None:
+                            target_candidate_status = "no_grounded_candidate"
+                        elif best_grounded is None:
+                            target_candidate_status = "attribute_mismatch"
+                            target_attribute_mismatch_count += 1
+                        else:
+                            target_candidate_status = "candidate"
                         if best_grounded is None:
                             target_confirm_count = 0
                             last_candidate_world = None
@@ -551,15 +652,16 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                                     np.asarray(observation["robot_pose"], dtype=np.float64),
                                     args.target_near_distance,
                                 )
-                                # Replace only the current demo route. The
+                                # Replace the bounded search route. The
                                 # existing controller and LiDAR safety layer
-                                # remain responsible for wheel commands.
-                                controller.waypoints = (
-                                    np.asarray(target_near_waypoint, dtype=np.float32),
+                                # remain responsible for every wheel command.
+                                controller.replace_waypoints(
+                                    (target_near_waypoint,),
+                                    enable_detour=True,
                                 )
-                                controller.waypoint_idx = 0
-                                controller.enable_detour = True
                                 target_lock = True
+                                navigation_mode = "target_locked"
+                                target_candidate_status = "locked"
                                 reached = False
                                 print(
                                     "target_confirmed "
@@ -693,6 +795,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                         last_vision_result_age * 1000.0 if last_vision_result_age is not None else None
                     ),
                     "target_lock": bool(target_lock),
+                    "navigation_mode": navigation_mode,
+                    "target_candidate_status": target_candidate_status,
+                    "target_attribute_mismatch_count": target_attribute_mismatch_count,
                     "target_world_x": None if target_world_position is None else target_world_position[0],
                     "target_world_y": None if target_world_position is None else target_world_position[1],
                     "nearest_vision_label": nearest_label,
@@ -707,6 +812,16 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     f"vision={vision_status}:{len(usable_result.detections) if usable_result else 0} "
                     f"lidar_front_min={front_min_lidar:.2f} cmd=({linear_speed:+.2f},{angular_speed:+.2f})"
                 )
+
+            # Reaching the end of the bounded search route is not success for
+            # an instruction. Stop and make the missing-target state explicit;
+            # never continue to the old fixed route's final point.
+            if args.instruction and reached and not target_lock:
+                target_not_found = True
+                navigation_mode = "target_not_found"
+                reached = False
+                print("target_not_found search_route_complete")
+                break
 
             demo_target_reached = bool(args.instruction and target_lock and reached)
             if collided or demo_target_reached or (reached and not args.instruction):
@@ -732,11 +847,21 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "reached": bool(reached),
             "collided": bool(collided),
             "timed_out": bool(timed_out),
-            "termination_reason": "reached" if reached else "collision" if collided else "timeout",
+            "termination_reason": (
+                "target_not_found"
+                if target_not_found
+                else "reached"
+                if reached
+                else "collision"
+                if collided
+                else "timeout"
+            ),
             "final_x": float(final_position[0]),
             "final_y": float(final_position[1]),
             "target_x": target_for_scenario(args.scenario)[0],
             "target_y": target_for_scenario(args.scenario)[1],
+            "search_waypoints": [list(map(float, waypoint)) for waypoint in search_waypoints],
+            "active_waypoints": [list(map(float, waypoint)) for waypoint in controller.waypoints],
             "command_target_x": float(controller.target[0]),
             "command_target_y": float(controller.target[1]),
             "perception_mode": args.perception_mode,
@@ -745,9 +870,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "user_instruction": args.instruction,
             "resolved_visual_prompt": resolved_visual_prompt,
             "target_lock": target_lock,
+            "target_lock_conf": args.target_lock_conf if args.instruction else None,
             "target_confirm_frames": args.target_confirm_frames if args.instruction else None,
             "target_world_position": None if target_world_position is None else list(target_world_position),
             "target_near_waypoint": None if target_near_waypoint is None else list(target_near_waypoint),
+            "navigation_mode": navigation_mode,
+            "target_not_found": target_not_found,
+            "target_candidate_status": target_candidate_status,
+            "target_attribute_mismatch_count": target_attribute_mismatch_count,
             "detector_model": (
                 str(getattr(detector, "model_path"))
                 if getattr(detector, "model_path", None)

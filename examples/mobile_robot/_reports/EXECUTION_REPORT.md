@@ -413,10 +413,11 @@ Viewer 和车载 RGB 窗口均成功启动；1126 步到达、0 碰撞、45/45 �
 1. `ground_truth` 检测器是联调工具，不能作为视觉识别验收结果；
 2. `--calibrated-depth` 已按 Genesis 已知内外参实现；`--approx-depth` 仅为兼容性降级路径，不能用于安全决策；
 3. 当前自定义 YOLO 是随机初始化的仿真模型；box/cylinder 独立 test 未达到每类 90% recall，不能宣称最终模型；
-4. 当前 P0 视觉结果不直接改变导航动作，只保证 LiDAR 安全层；
+4. 不带 `--instruction` 时视觉结果仍是旁路；带自然语言指令的最小 Demo 已在目标
+   RGB-D 连续确认后通过 `replace_waypoints()` 接管目标附近航点，LiDAR 仍是最终安全层；
 5. 受限沙箱没有 OpenGL context；宿主环境已经完成 ground-truth 回归，后续仍需在团队标准机器固定测试；
 6. URDF 四轮动力学仍应在运动学视觉闭环通过后单独校准；
-7. `pytest-xdist/pytest-timeout/ruff` 尚未齐备，正式交付前应补齐开发依赖并执行项目标准测试命令；当前纯 Python 视觉回归为 12 passed。
+7. `pytest-xdist/pytest-timeout/ruff` 尚未齐备，正式交付前应补齐开发依赖并执行项目标准测试命令；当前纯 Python 视觉回归为 17 passed（使用 `-o addopts=''`）。
 
 ## 8. 下一步交付顺序
 
@@ -426,7 +427,8 @@ Viewer 和车载 RGB 窗口均成功启动；1126 步到达、0 碰撞、45/45 �
 2. 生成绿色柱子、平台、新材质、多目标、目标缺失和诱饵物体的 Genesis OOD 测试集，按资产/语义组合划分；
 3. 补齐 Phrase Grounding Recall、Top-1、缺失目标误报率、歧义检出率和 RGB-D 三维误差；
 4. 实现 mask/ROI 属性验证、多帧确认和 `NO_VISUAL_MATCH`/`AMBIGUOUS_TARGET` 状态机；
-5. 通过冻结指标后才接入主动搜索、目标附近姿态和路径规划；
+5. 最小 Demo 已接入一次性目标附近航点；正式主动搜索、目标附近姿态和全局路径规划仍需在
+   OOD/误报指标冻结后实现；
 6. 补齐 `pytest-xdist/pytest-timeout/ruff`，执行项目默认标准测试；
 7. LLM 保持独立，只消费确认后的目标证据并输出开放指代表达/约束，不输出坐标、路径或轮速。
 
@@ -445,6 +447,8 @@ Viewer 和车载 RGB 窗口均成功启动；1126 步到达、0 碰撞、45/45 �
 - [X] 视觉单元 pytest 报告（使用 `-o addopts=''`）；
 - [X] 独立 `--annotated-view` 实时标注窗口及宿主 GUI 回归；
 - [X] 开放词汇 YOLO-World 候选器和 `open_vocab` 车载旁路；OWLv2 暂不纳入当前验收路线；
+- [X] 开放词汇最小指令 Demo：目标世界坐标、临时目标航点、waypoint + LiDAR 动态接管、
+  `TARGET_NOT_FOUND` 终止状态和可验证 telemetry；
 - [ ] 项目默认 pytest + ruff 标准测试报告。
 
 ## 10. 开放词汇阶段追加结果（2026-09-09）
@@ -457,5 +461,6 @@ Viewer 和车载 RGB 窗口均成功启动；1126 步到达、0 碰撞、45/45 �
 - [X] `OpenVocabularyGrounder` 协议、`GroundingCandidate` 和 MPS→CPU 设备策略；
 - [X] YOLO-World 本地候选器和 45 帧真实车载图像基准；
 - [X] `candidate`/`ambiguous`/`low_confidence`/`no_visual_match` 分类、JSONL 和标注输出；
-- [X] 12 项视觉单元测试和原闭集 YOLO 单帧回归；
-- [ ] OOD 真值集、第二模型实测、三维目标确认和导航接入。
+- [X] 17 项视觉单元测试和原闭集 YOLO 单帧回归；
+- [~] OOD 真值集/指标和第二模型实测仍未完成；最小 Demo 已完成三维目标确认和动态航点接入，
+  但尚不等同于任意目标可靠导航验收。

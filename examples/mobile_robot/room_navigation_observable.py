@@ -389,6 +389,32 @@ class DifferentialDriveController:
         self.detour_steps_remaining = 0
         self.detour_completed = False
 
+    def replace_waypoints(
+        self,
+        waypoints: tuple[tuple[float, float], ...] | list[tuple[float, float]] | tuple[np.ndarray, ...],
+        *,
+        enable_detour: bool | None = None,
+    ) -> None:
+        """Replace the active route at runtime and restart waypoint tracking.
+
+        This is the hand-off point used by the vision/navigation demo.  A target
+        observed by RGB-D is converted to a temporary waypoint and installed
+        here; subsequent wheel commands still pass through this controller's
+        heading, waypoint and LiDAR safety logic.  Keeping the mutation in one
+        method avoids accidentally retaining progress or an old detour phase
+        from the fixed search route.
+        """
+
+        normalized = tuple(np.asarray(waypoint, dtype=np.float32).reshape(2) for waypoint in waypoints)
+        if not normalized:
+            raise ValueError("waypoints must contain at least one [x, y] target")
+        if not all(np.all(np.isfinite(waypoint)) for waypoint in normalized):
+            raise ValueError("waypoints must contain finite coordinates")
+        self.waypoints = normalized
+        if enable_detour is not None:
+            self.enable_detour = bool(enable_detour)
+        self.reset()
+
     @property
     def target(self) -> np.ndarray:
         return self.waypoints[-1]

@@ -313,21 +313,35 @@ cylinder_obstacle 0.918
 ## 8. 本轮交付验证
 
 - `compileall examples/mobile_robot`：通过；
-- 视觉单元测试：`13 passed`，包含新增 ROI 证据的 truth-free 契约测试；
+- 视觉单元测试：`17 passed`，包含新增目标属性一致性和动态航点契约测试；
 - 原闭集 YOLO test 回归：151 张图，precision `0.950`、recall `0.898`、mAP50 `0.943`；
   原权重和 `perception-mode yolo` 路径未修改；
 - 开放词汇 `ood_test` ensemble：已生成逐帧 JSONL 和按 prompt/资产/可见性拆分的 summary，
-  但准入指标仍未通过，因此没有改动任何导航目标、waypoint 或轮速控制逻辑。
+  但准入指标仍未通过，因此开放词汇旁路（不带 `--instruction`）不会改动任何导航目标、waypoint
+  或轮速控制逻辑。
 
 ## 9. 最小自然语言 Demo 状态
 
 已在 `room_navigation_vision.py` 增加一个显式 `--instruction` 入口，用于先演示视觉/控制侧的
-最小链路：
+最小链路。此前版本的实际运行证据显示：候选和 `position_world` 已产生，但默认状态阈值
+`0.05` 高于本地 YOLO-World 在 Genesis 小图上的原始分数（约 `0.001`～`0.018`），导致
+`target_lock=false`，车辆跑完旧固定路线。这不是坐标/航点算法未写，而是候选没有被准入，且
+结束条件错误地允许指令模式继续跑到固定终点。
 
 ```text
 用户指令 → 简单短语转换 → YOLO-World 候选 → 连续 RGB-D 确认
           → 目标附近临时航点 → 原 waypoint + LiDAR 控制器
 ```
+
+当前已修正为：
+
+- `--target-lock-conf` 与显示用的 `--open-vocab-decision-conf` 分离，默认 Demo 锁定阈值为 `0.001`；
+- 只有带有限 `position_world` 的开放词汇候选，且连续确认达到 `--target-confirm-frames`，才调用
+  控制器的 `replace_waypoints()`，重置旧航点进度和 LiDAR detour 状态；
+- `summary.json`/`telemetry.csv` 写入 `navigation_mode`、`target_lock`、`target_near_waypoint`、
+  `command_target_x/y`；目标确认后后两者应一致；
+- 指令模式到达“视觉搜索路线”末端仍未锁定目标时，停止并报告 `termination_reason=target_not_found`，
+  不再驶向旧固定终点。
 
 该入口不会读取 Genesis 真值，也不会改变闭集 YOLO 路径。当前短语转换器只处理少量常见中文词，
 未知英文词会原样保留；复杂关系（例如“柱子后面的平台”）、多语言改写和真正的任意现实物品
@@ -335,5 +349,24 @@ cylinder_obstacle 0.918
 不应作为任意目标可靠到达的验收结果。
 
 自动化环境中的无 GUI 冒烟运行受到宿主 OpenGL 限制（`Failed to find an OpenGL 3.2+ core profile`
-而无法创建 Genesis 渲染器）；CLI 解析、14 项视觉单元测试和代码编译均通过。请在有 Genesis
+而无法创建 Genesis 渲染器）；CLI 解析、17 项视觉单元测试和代码编译均通过。请在有 Genesis
 WindowServer/OpenGL 的本机终端运行 README 中的可视化命令完成实际窗口演示。
+
+## 10. 提示词切换误锁定修正
+
+2026-09-10 的实际日志发现：同一场景先输入“黄色小车”、再输入“绿色平台”时，第二次
+YOLO-World 仍在黄色小车的 ROI 上产生候选。候选标签虽然被模型写成 `green platform`，但
+`enrich_colors` 给出的独立 RGB 属性为 `color=yellow`、`color_confidence≈0.99`，两次运行的
+`target_world_position` 也几乎相同（约 `(-1.91, 0.10)`）。此前 `target-lock-conf=0.001`
+只检查文本候选和世界坐标，因而错误接管了同一临时航点。
+
+已增加开放词汇属性一致性门：
+
+- 提示词包含可验证颜色时，候选颜色必须一致且 ROI 置信度至少为 `0.35`；
+- 颜色不一致的候选只保留在视觉日志中，导航状态写为 `attribute_mismatch`；
+- 当前 `vision_route_showcase` 没有绿色平台时，最终应为 `target_lock=false`、
+  `termination_reason=target_not_found`，不会驶向黄色小车；
+- 没有明确颜色的任意文本仍走开放词汇模型，不增加固定物体类别表。
+
+对用户提供的第二次 `green platform` 日志离线复算：13 帧存在可用 RGB-D 候选，13 帧均被
+颜色属性门拒绝，0 帧允许锁定。新增单元测试后视觉/控制测试为 `17 passed`。
