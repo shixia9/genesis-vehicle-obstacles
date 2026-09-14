@@ -149,7 +149,14 @@ class InstructionWindow:
             command=self.submit,
             state="disabled",
         )
-        self.submit_button.grid(row=0, column=1)
+        self.submit_button.grid(row=0, column=1, padx=(0, 8))
+        self.reset_button = ttk.Button(
+            input_frame,
+            text="重置环境",
+            command=self.reset,
+            state="disabled",
+        )
+        self.reset_button.grid(row=0, column=2)
 
         self.log = tk.Text(frame, height=12, state="disabled", wrap=tk.WORD)
         self.log.grid(row=3, column=0, sticky="nsew", pady=(12, 8))
@@ -199,17 +206,22 @@ class InstructionWindow:
                         self.status_var.set("Genesis 环境已初始化，请输入 instruction。")
                         self.entry.configure(state="normal")
                         self.submit_button.configure(state="normal")
+                        self.reset_button.configure(state="disabled")
                         self.entry.focus_set()
                     elif line:
                         self._append_log(line)
                 elif event == "exit":
                     return_code = int(payload)
                     if not self._closed:
+                        self._ready = False
                         self.status_var.set(
-                            "执行完成。" if return_code == 0 else f"仿真进程已退出（返回码 {return_code}）。"
+                            "执行完成，请点击“重置环境”后再次执行。"
+                            if return_code == 0
+                            else f"仿真进程已退出（返回码 {return_code}），可点击“重置环境”重试。"
                         )
                         self.entry.configure(state="disabled")
                         self.submit_button.configure(state="disabled")
+                        self.reset_button.configure(state="normal")
                 elif event == "error":
                     self.status_var.set(str(payload))
         except queue.Empty:
@@ -246,6 +258,25 @@ class InstructionWindow:
         self.status_var.set("已发送 instruction，小车执行中…")
         self.entry.configure(state="disabled")
         self.submit_button.configure(state="disabled")
+
+    def reset(self) -> None:
+        """Start a fresh Genesis process after the previous episode has ended."""
+
+        if self._closed or self.process.poll() is None:
+            return
+        self._ready = False
+        self._submitted = False
+        self.instruction_var.set("")
+        self.entry.configure(state="disabled")
+        self.submit_button.configure(state="disabled")
+        self.reset_button.configure(state="disabled")
+        self.status_var.set("正在重置 Genesis 环境…")
+        self._append_log("----- 重置环境，开始新的 episode -----")
+        try:
+            self.process = self._start_process()
+        except OSError as exc:
+            self.status_var.set(f"无法重新启动仿真进程：{exc}")
+            self.reset_button.configure(state="normal")
 
     def close(self) -> None:
         if self._closed:
