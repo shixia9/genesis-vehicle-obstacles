@@ -239,6 +239,33 @@ Genesis RGB-D 标定计算目标附近临时航点，并通过 `replace_waypoint
 OOD 指标重新标定阈值。若搜索路线结束仍未获得有效世界坐标，程序会停止并写入
 `termination_reason=target_not_found`，不会继续驶向旧固定终点。
 
+### 交互式 instruction 界面
+
+如果希望先启动 Genesis 场景、确认环境已完成初始化后再输入指令，可使用 Tkinter
+前端。它复用上面视觉 Demo 的全部参数；Genesis viewer、车载视角和标注窗口仍按原方式
+打开，原来的命令行入口不受影响：
+
+```bash
+.venv/bin/python examples/mobile_robot/room_navigation_gui.py \
+  --scenario vision_route_showcase \
+  --perception-mode open_vocab \
+  --open-vocab-backend yolo-world \
+  --vision-model models/mobile_robot/open_vocab/yolov8s-world.pt \
+  --open-vocab-device auto \
+  --open-vocab-infer-conf 0.001 \
+  --open-vocab-decision-conf 0.05 \
+  --target-lock-conf 0.001 \
+  --calibrated-depth \
+  --vis --robot-view --annotated-view \
+  --save-vision \
+  --output-dir out/mobile_robot_nl_gui
+```
+
+窗口启动后会显示“正在启动 Genesis 环境…”。场景、相机和 RGB-D 标定完成后，输入框
+才会启用；输入例如 `行驶到黄色小车附近` 并点击“执行指令”即可开始原有导航闭环。
+GUI 通过标准库 Tkinter 启动一个保持 Genesis 主线程行为的仿真子进程，因此不需要新增
+第三方依赖，也不会改变 `room_navigation_vision.py --instruction ...` 的运行方式。
+
 另外，提示词中明确出现 `yellow/green/red/blue` 等颜色时，候选框还必须通过独立 RGB ROI
 颜色校验；例如画面中只有黄色小车时输入“绿色平台”，会记录
 `target_candidate_status=attribute_mismatch` 并停止为 `TARGET_NOT_FOUND`，不会把黄色小车

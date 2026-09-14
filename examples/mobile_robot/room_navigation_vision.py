@@ -44,6 +44,7 @@ import math
 import os
 import re
 from pathlib import Path
+import sys
 import time
 from types import SimpleNamespace
 from typing import Any
@@ -120,7 +121,7 @@ except ImportError:  # pragma: no cover - direct script execution
     )
 
 
-def parse_args() -> argparse.Namespace:
+def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--steps", type=int, default=1200, help="Maximum simulation steps.")
     parser.add_argument("--dt", type=float, default=0.02, help="Simulation timestep in seconds.")
@@ -234,7 +235,16 @@ def parse_args() -> argparse.Namespace:
         default=Path("out/mobile_robot_vision"),
         help="Run output directory.",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--wait-for-instruction",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    return parser
+
+
+def parse_args() -> argparse.Namespace:
+    return build_arg_parser().parse_args()
 
 
 def _error_result(frame: FramePacket, status: str) -> VisionResult:
@@ -439,17 +449,31 @@ def _best_grounded_detection(
     return max(grounded, key=lambda item: float(item.confidence), default=None)
 
 
+def _apply_instruction(args: argparse.Namespace) -> str | None:
+    """Resolve an instruction after all inputs for the episode are available."""
+
+    if not args.instruction:
+        return None
+    if args.perception_mode != "open_vocab":
+        raise ValueError("--instruction requires --perception-mode open_vocab")
+    if args.vision_prompt:
+        raise ValueError("use --instruction or --vision-prompt, not both")
+    resolved_visual_prompt = instruction_to_visual_prompt(args.instruction)
+    args.vision_prompt = [resolved_visual_prompt]
+    # The demo needs a world point to create the temporary target waypoint.
+    args.calibrated_depth = True
+    return resolved_visual_prompt
+
+
 def run(args: argparse.Namespace) -> dict[str, Any]:
+    wait_for_instruction = bool(getattr(args, "wait_for_instruction", False))
     resolved_visual_prompt: str | None = None
-    if args.instruction:
-        if args.perception_mode != "open_vocab":
-            raise ValueError("--instruction requires --perception-mode open_vocab")
-        if args.vision_prompt:
-            raise ValueError("use --instruction or --vision-prompt, not both")
-        resolved_visual_prompt = instruction_to_visual_prompt(args.instruction)
-        args.vision_prompt = [resolved_visual_prompt]
-        # The demo needs a world point to create the temporary target waypoint.
-        args.calibrated_depth = True
+    if not wait_for_instruction:
+        resolved_visual_prompt = _apply_instruction(args)
+    elif args.perception_mode != "open_vocab":
+        raise ValueError("--wait-for-instruction requires --perception-mode open_vocab")
+    elif args.instruction:
+        raise ValueError("--wait-for-instruction expects the instruction on stdin")
     if args.steps <= 0 or args.dt <= 0.0:
         raise ValueError("--steps and --dt must be positive")
     if args.vision_every <= 0 or args.image_every <= 0 or args.log_every <= 0:
@@ -486,6 +510,17 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     rgbd_calibration = build_genesis_rgbd_calibration(robot_rgb_camera, depth_camera, getattr(car, "body", None))
     calibration_path = args.output_dir / "camera_calibration.json"
     calibration_path.write_text(json.dumps(rgbd_calibration.to_dict(), indent=2), encoding="utf-8")
+    if wait_for_instruction:
+        try:
+            print("GENESIS_READY_FOR_INSTRUCTION", flush=True)
+            instruction = sys.stdin.readline().strip()
+            if not instruction:
+                raise ValueError("No instruction was received on stdin")
+            args.instruction = instruction
+            resolved_visual_prompt = _apply_instruction(args)
+        except BaseException:
+            gs.destroy()
+            raise
     semantic_specs = semantic_objects_for_scenario(args.scenario)
     detector, detector_init_error = _make_detector(args, semantic_specs)
     tracker = ObjectTracker()
