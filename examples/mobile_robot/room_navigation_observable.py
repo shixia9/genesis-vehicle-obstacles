@@ -262,7 +262,7 @@ def add_room(
     # Emission surfaces keep the CPU rasterizer's recorded overview frames readable
     # without relying on a backend-specific light configuration.
     room_surface = gs.surfaces.Emission(color=(0.62, 0.67, 0.75))
-    obstacle_surface = gs.surfaces.Emission(color=(0.90, 0.25, 0.08))
+    obstacle_surface = gs.surfaces.Emission(color=(0.65, 0.15, 0.85))
 
     entities = [scene.add_entity(gs.morphs.Plane(), surface=gs.surfaces.Emission(color=(0.30, 0.34, 0.40)))]
     entities.extend(
@@ -337,9 +337,11 @@ class DifferentialDriveController:
     The waypoint term supplies the nominal navigation command.  If a close obstacle is
     detected in the forward scan, the car stops and turns toward the side with more
     free space. When ``enable_detour`` is enabled, the controller then translates a
-    short distance in that direction before returning to waypoint tracking. This keeps
-    the first controller explainable while making LiDAR part of the actual control
-    loop instead of a logging-only signal.
+    short distance in that direction before returning to waypoint tracking. Every
+    translational detour command rechecks the forward LiDAR safety envelope, so the
+    fixed detour cannot drive blindly into a newly exposed obstacle. This keeps the
+    first controller explainable while making LiDAR part of the actual control loop
+    instead of a logging-only signal.
     """
 
     def __init__(
@@ -428,7 +430,7 @@ class DifferentialDriveController:
 
         Keeping this adapter beside ``command`` makes the old, easy-to-test scalar
         controller usable by the programmatic environment without coupling it to a
-        particular sensor implementation.
+    particular sensor implementation.
         """
         try:
             odom_pose = np.asarray(observation["odom_pose"], dtype=np.float32).reshape(-1)
@@ -444,6 +446,9 @@ class DifferentialDriveController:
         lidar_angles = np.linspace(-math.pi, math.pi, len(lidar_distances), endpoint=False)
         finite_lidar = np.where(np.isfinite(lidar_distances) & (lidar_distances > 0.0), lidar_distances, 6.0)
 
+        front_mask = np.abs(lidar_angles) <= math.radians(32.0)
+        front_min = float(np.min(finite_lidar[front_mask])) if np.any(front_mask) else float(np.min(finite_lidar))
+
         if self.enable_detour and self.detour_phase is not None:
             if self.detour_phase == "turn":
                 heading_error = wrap_angle(self.detour_heading - yaw)
@@ -457,39 +462,49 @@ class DifferentialDriveController:
                 self.detour_phase = "lateral"
 
             if self.detour_phase == "lateral":
-                if self.detour_steps_remaining > 0:
+                # Rotation in place is safe, but a fixed lateral translation is
+                # not allowed to ignore a newly exposed obstacle.
+                if front_min < self.lidar_safety_distance:
+                    self.detour_phase = None
+                    self.detour_steps_remaining = 0
+                elif self.detour_steps_remaining > 0:
                     self.detour_steps_remaining -= 1
                     return self.detour_lateral_speed, 0.0, False
-                self.detour_phase = "advance"
-                self.detour_heading = self.detour_forward_heading
-                self.detour_steps_remaining = self.detour_forward_steps
+                else:
+                    self.detour_phase = "advance"
+                    self.detour_heading = self.detour_forward_heading
+                    self.detour_steps_remaining = self.detour_forward_steps
 
             if self.detour_phase == "advance":
-                heading_error = wrap_angle(self.detour_heading - yaw)
-                if abs(heading_error) > 0.12:
-                    angular_speed = np.clip(
-                        3.0 * heading_error,
-                        -self.config.max_angular_speed,
-                        self.config.max_angular_speed,
-                    )
-                    return 0.0, float(angular_speed), False
-                if self.detour_steps_remaining > 0:
-                    self.detour_steps_remaining -= 1
-                    return self.detour_forward_speed, 0.0, False
-                self.detour_phase = None
-                self.detour_completed = True
+                # The old implementation returned a blind forward command for
+                # the whole fixed advance distance. Interrupt it as soon as a
+                # new obstacle enters the safety envelope and let the reactive
+                # branch below choose another direction.
+                if front_min < self.lidar_safety_distance:
+                    self.detour_phase = None
+                    self.detour_steps_remaining = 0
+                else:
+                    heading_error = wrap_angle(self.detour_heading - yaw)
+                    if abs(heading_error) > 0.12:
+                        angular_speed = np.clip(
+                            3.0 * heading_error,
+                            -self.config.max_angular_speed,
+                            self.config.max_angular_speed,
+                        )
+                        return 0.0, float(angular_speed), False
+                    if self.detour_steps_remaining > 0:
+                        self.detour_steps_remaining -= 1
+                        return self.detour_forward_speed, 0.0, False
+                    self.detour_phase = None
+                    self.detour_completed = True
 
-        front_mask = np.abs(lidar_angles) <= math.radians(32.0)
-        detour_allowed = self.enable_detour and not self.detour_completed
-        if np.any(front_mask) and float(np.min(finite_lidar[front_mask])) < self.lidar_safety_distance and (
-            not self.enable_detour or detour_allowed
-        ):
+        if front_min < self.lidar_safety_distance:
             left_mask = (lidar_angles > math.radians(20.0)) & (lidar_angles < math.radians(115.0))
             right_mask = (lidar_angles < -math.radians(20.0)) & (lidar_angles > -math.radians(115.0))
             left_clearance = float(np.mean(finite_lidar[left_mask])) if np.any(left_mask) else 0.0
             right_clearance = float(np.mean(finite_lidar[right_mask])) if np.any(right_mask) else 0.0
             turn_direction = 1.0 if left_clearance >= right_clearance else -1.0
-            if self.enable_detour:
+            if self.enable_detour and not self.detour_completed:
                 self.detour_direction = turn_direction
                 self.detour_heading = wrap_angle(yaw + turn_direction * math.pi / 2.0)
                 self.detour_forward_heading = math.atan2(

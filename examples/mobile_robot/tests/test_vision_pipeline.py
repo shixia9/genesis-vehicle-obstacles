@@ -266,6 +266,39 @@ def test_waypoint_controller_keeps_lidar_safety_priority() -> None:
     assert abs(blocked[1]) == CarConfig().max_angular_speed
 
 
+def test_detour_rechecks_lidar_before_every_translation() -> None:
+    controller = DifferentialDriveController(
+        CarConfig(), VISION_ROUTE_WAYPOINTS, enable_detour=True
+    )
+    controller.detour_phase = "advance"
+    controller.detour_heading = 0.0
+    controller.detour_steps_remaining = 20
+
+    blocked = np.full(72, 6.0, dtype=np.float32)
+    blocked[35:38] = 0.08
+    linear, angular, arrived = controller.command(
+        np.asarray((-0.7, 2.27), dtype=np.float32),
+        0.0,
+        blocked,
+    )
+
+    assert linear == 0.0
+    assert abs(angular) == CarConfig().max_angular_speed
+    assert arrived is False
+    assert controller.detour_phase == "turn"
+
+    controller.detour_phase = None
+    controller.detour_completed = True
+    linear, angular, arrived = controller.command(
+        np.asarray((-0.7, 2.27), dtype=np.float32),
+        0.0,
+        blocked,
+    )
+    assert linear == 0.0
+    assert abs(angular) == CarConfig().max_angular_speed
+    assert arrived is False
+
+
 def test_runtime_route_replacement_restarts_waypoint_and_detour_state() -> None:
     controller = DifferentialDriveController(CarConfig(), VISION_ROUTE_WAYPOINTS)
     controller.waypoint_idx = 3
