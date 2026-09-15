@@ -3,8 +3,9 @@
 The vehicle policy remains the existing waypoint + LiDAR safety controller. Without
 ``--instruction`` this program preserves the fixed-route baseline. With an
 instruction, that route is only a bounded visual-search route; after a confirmed
-RGB-D target, the controller is replanned to one temporary waypoint near that
-target. A missing or slow model never invents a target and ends with
+RGB-D target, the controller is replanned to a short static-obstacle-aware route
+ending at one temporary waypoint near that target. A missing or slow model never
+invents a target and ends with
 ``TARGET_NOT_FOUND`` instead of driving to the baseline route's final point.
 
 Examples::
@@ -38,6 +39,7 @@ from __future__ import annotations
 import argparse
 import csv
 from collections import Counter
+import heapq
 import hashlib
 import json
 import math
@@ -375,6 +377,152 @@ def _nearby_waypoint(
     return float(point[0]), float(point[1])
 
 
+def _plan_collision_free_route(
+    start: np.ndarray | tuple[float, float],
+    goal: np.ndarray | tuple[float, float],
+    obstacle_specs: tuple[tuple[tuple[float, float], tuple[float, float, float]], ...],
+    room_config: RoomConfig,
+    *,
+    resolution: float = 0.20,
+    clearance: float = 0.12,
+) -> tuple[tuple[float, float], ...] | None:
+    """Plan a short static-obstacle route with a small 2-D A* grid.
+
+    The RGB-D target supplies the goal, while Genesis already knows the static
+    obstacle geometry.  Inflating each obstacle by the vehicle footprint and a
+    margin makes the resulting route usable by the existing waypoint controller;
+    LiDAR remains the runtime safety fallback for anything not in this registry.
+    """
+
+    if resolution <= 0.0 or clearance < 0.0:
+        raise ValueError("resolution must be positive and clearance must be non-negative")
+
+    start_xy = np.asarray(start, dtype=np.float64).reshape(2)
+    goal_xy = np.asarray(goal, dtype=np.float64).reshape(2)
+    if not np.all(np.isfinite(start_xy)) or not np.all(np.isfinite(goal_xy)):
+        return None
+
+    body_half_x, body_half_y = 0.36, 0.25
+    x_min = -room_config.length / 2.0 + body_half_x + clearance
+    x_max = room_config.length / 2.0 - body_half_x - clearance
+    y_min = -room_config.width / 2.0 + body_half_y + clearance
+    y_max = room_config.width / 2.0 - body_half_y - clearance
+    if x_min >= x_max or y_min >= y_max:
+        return None
+
+    inflated_obstacles = tuple(
+        (
+            float(position[0]) - float(size[0]) / 2.0 - body_half_x - clearance,
+            float(position[0]) + float(size[0]) / 2.0 + body_half_x + clearance,
+            float(position[1]) - float(size[1]) / 2.0 - body_half_y - clearance,
+            float(position[1]) + float(size[1]) / 2.0 + body_half_y + clearance,
+        )
+        for position, size in obstacle_specs
+    )
+
+    x_count = max(2, int(math.floor((x_max - x_min) / resolution)) + 1)
+    y_count = max(2, int(math.floor((y_max - y_min) / resolution)) + 1)
+
+    def point_for(node: tuple[int, int]) -> tuple[float, float]:
+        return (x_min + node[0] * resolution, y_min + node[1] * resolution)
+
+    def is_free(node: tuple[int, int]) -> bool:
+        if not 0 <= node[0] < x_count or not 0 <= node[1] < y_count:
+            return False
+        x, y = point_for(node)
+        return not any(x0 <= x <= x1 and y0 <= y <= y1 for x0, x1, y0, y1 in inflated_obstacles)
+
+    free_nodes = {
+        (x_index, y_index)
+        for x_index in range(x_count)
+        for y_index in range(y_count)
+        if is_free((x_index, y_index))
+    }
+    if not free_nodes:
+        return None
+
+    def nearest_free(point: np.ndarray) -> tuple[int, int] | None:
+        candidates = sorted(
+            free_nodes,
+            key=lambda node: (point_for(node)[0] - point[0]) ** 2 + (point_for(node)[1] - point[1]) ** 2,
+        )
+        return candidates[0] if candidates else None
+
+    start_node = nearest_free(start_xy)
+    goal_node = nearest_free(goal_xy)
+    if start_node is None or goal_node is None:
+        return None
+
+    def heuristic(node: tuple[int, int]) -> float:
+        dx = node[0] - goal_node[0]
+        dy = node[1] - goal_node[1]
+        return math.hypot(dx, dy)
+
+    frontier: list[tuple[float, tuple[int, int]]] = [(heuristic(start_node), start_node)]
+    came_from: dict[tuple[int, int], tuple[int, int] | None] = {start_node: None}
+    cost_so_far: dict[tuple[int, int], float] = {start_node: 0.0}
+    neighbors = (
+        (-1, -1),
+        (-1, 0),
+        (-1, 1),
+        (0, -1),
+        (0, 1),
+        (1, -1),
+        (1, 0),
+        (1, 1),
+    )
+
+    while frontier:
+        _, current = heapq.heappop(frontier)
+        if current == goal_node:
+            break
+        for dx, dy in neighbors:
+            candidate = (current[0] + dx, current[1] + dy)
+            if candidate not in free_nodes:
+                continue
+            # Do not cut diagonally through the corner of an inflated obstacle.
+            if dx and dy and (
+                (current[0] + dx, current[1]) not in free_nodes
+                or (current[0], current[1] + dy) not in free_nodes
+            ):
+                continue
+            step_cost = math.sqrt(2.0) if dx and dy else 1.0
+            new_cost = cost_so_far[current] + step_cost
+            if new_cost >= cost_so_far.get(candidate, float("inf")):
+                continue
+            cost_so_far[candidate] = new_cost
+            came_from[candidate] = current
+            heapq.heappush(frontier, (new_cost + heuristic(candidate), candidate))
+
+    if goal_node not in came_from:
+        return None
+
+    grid_path: list[tuple[int, int]] = []
+    current: tuple[int, int] | None = goal_node
+    while current is not None:
+        grid_path.append(current)
+        current = came_from[current]
+    grid_path.reverse()
+
+    route: list[tuple[float, float]] = [(float(start_xy[0]), float(start_xy[1]))]
+    route.extend(point_for(node) for node in grid_path[1:-1])
+    route.append((float(goal_xy[0]), float(goal_xy[1])))
+
+    # Remove collinear grid points; retaining turns keeps the route readable and
+    # gives the existing controller fewer waypoints to track.
+    simplified: list[tuple[float, float]] = [route[0]]
+    for index, point in enumerate(route[1:-1], start=1):
+        previous = np.asarray(simplified[-1], dtype=np.float64)
+        current_point = np.asarray(point, dtype=np.float64)
+        following = np.asarray(route[index + 1], dtype=np.float64)
+        first = current_point - previous
+        second = following - current_point
+        if abs(float(first[0] * second[1] - first[1] * second[0])) > 1e-8:
+            simplified.append(point)
+    simplified.append(route[-1])
+    return tuple(simplified)
+
+
 _PROMPT_COLOR_TERMS = {
     "yellow": "yellow",
     "green": "green",
@@ -544,6 +692,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     target_confirm_count = 0
     target_world_position: tuple[float, float, float] | None = None
     target_near_waypoint: tuple[float, float] | None = None
+    target_route_mode: str | None = None
     last_candidate_world: np.ndarray | None = None
     navigation_mode = "searching" if args.instruction else "fixed_waypoints"
     target_not_found = False
@@ -687,12 +836,26 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                                     np.asarray(observation["robot_pose"], dtype=np.float64),
                                     args.target_near_distance,
                                 )
-                                # Replace the bounded search route. The
-                                # existing controller and LiDAR safety layer
-                                # remain responsible for every wheel command.
+                                # Replace the bounded search route. Use the
+                                # known static scene geometry to route around
+                                # obstacles, while retaining LiDAR as a runtime
+                                # safety fallback.
+                                planned_route = _plan_collision_free_route(
+                                    observation["robot_pose"][:2],
+                                    target_near_waypoint,
+                                    obstacle_specs,
+                                    room_config,
+                                )
+                                if planned_route is None:
+                                    planned_route = (target_near_waypoint,)
+                                    target_route_mode = "reactive_fallback"
+                                    enable_detour = True
+                                else:
+                                    target_route_mode = "static_astar"
+                                    enable_detour = False
                                 controller.replace_waypoints(
-                                    (target_near_waypoint,),
-                                    enable_detour=True,
+                                    planned_route,
+                                    enable_detour=enable_detour,
                                 )
                                 target_lock = True
                                 navigation_mode = "target_locked"
@@ -702,7 +865,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                                     "target_confirmed "
                                     f"prompt={args.vision_prompt[0]!r} "
                                     f"world=({candidate_world[0]:+.2f},{candidate_world[1]:+.2f}) "
-                                    f"near=({target_near_waypoint[0]:+.2f},{target_near_waypoint[1]:+.2f})"
+                                    f"near=({target_near_waypoint[0]:+.2f},{target_near_waypoint[1]:+.2f}) "
+                                    f"route={target_route_mode}:{len(planned_route)}"
                                 )
                     inference_count += 1
                 except Exception as exc:  # detector failures never own the control loop
@@ -909,6 +1073,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "target_confirm_frames": args.target_confirm_frames if args.instruction else None,
             "target_world_position": None if target_world_position is None else list(target_world_position),
             "target_near_waypoint": None if target_near_waypoint is None else list(target_near_waypoint),
+            "target_route_mode": target_route_mode,
             "navigation_mode": navigation_mode,
             "target_not_found": target_not_found,
             "target_candidate_status": target_candidate_status,

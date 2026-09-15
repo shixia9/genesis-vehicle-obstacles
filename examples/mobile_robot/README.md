@@ -226,10 +226,10 @@ env.close()
 ```
 
 该 Demo 会把常见中文颜色/物体词转换成一个 YOLO-World prompt，连续确认目标后，使用已知
-Genesis RGB-D 标定计算目标附近临时航点，并通过 `replace_waypoints()` 交给原有 waypoint + LiDAR
+Genesis RGB-D 标定计算目标附近临时航点，再结合静态障碍物生成一条短路径，并通过 `replace_waypoints()` 交给原有 waypoint + LiDAR
 控制器。`summary.json` 中的 `navigation_mode` 会从 `searching` 变为 `target_locked`，
-`active_waypoints` 会从搜索航点切换为单个目标航点，且 `command_target_x/y` 应与
-`target_near_waypoint` 一致；这才表示车辆已经脱离固定搜索路线。
+`active_waypoints` 会从搜索航点切换为目标路径，路径最后一个航点接近
+`target_near_waypoint`；这才表示车辆已经脱离固定搜索路线。
 画面、`vision_results.jsonl` 和 `summary.json` 会保存在输出目录。它是视觉/控制侧的最小演示：
 复杂空间关系、多语言改写和任意现实物体的完整语义解析仍由后续 LLM 适配器负责，LLM 不输出轮速或路径。
 

@@ -31,11 +31,13 @@ from examples.mobile_robot.vision import (
 from examples.mobile_robot.room_navigation_observable import (
     CarConfig,
     DifferentialDriveController,
+    RoomConfig,
     VISION_ROUTE_WAYPOINTS,
 )
 from examples.mobile_robot.room_navigation_vision import (
     _best_grounded_detection,
     _nearby_waypoint,
+    _plan_collision_free_route,
     _prompt_expected_colors,
 )
 from examples.mobile_robot.vision.evaluate_runtime import _match_frame
@@ -297,6 +299,21 @@ def test_detour_rechecks_lidar_before_every_translation() -> None:
     assert linear == 0.0
     assert abs(angular) == CarConfig().max_angular_speed
     assert arrived is False
+
+
+def test_target_route_planner_goes_around_static_obstacle() -> None:
+    route = _plan_collision_free_route(
+        (-1.0, 0.0),
+        (1.0, 0.0),
+        (((0.0, 0.0), (0.8, 0.8, 0.6)),),
+        RoomConfig(),
+    )
+
+    assert route is not None
+    assert np.allclose(route[0], (-1.0, 0.0))
+    assert np.allclose(route[-1], (1.0, 0.0))
+    assert len(route) > 2
+    assert any(abs(point[1]) > 0.5 for point in route[1:-1])
 
 
 def test_runtime_route_replacement_restarts_waypoint_and_detour_state() -> None:
